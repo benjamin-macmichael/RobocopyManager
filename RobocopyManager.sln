@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36518.9 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RobocopyManager", "RobocopyManager\RobocopyManager.csproj", "{15A5A922-9B9E-4FB8-BD16-2037F8FCE0FD}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{15A5A922-9B9E-4FB8-BD16-2037F8FCE0FD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{15A5A922-9B9E-4FB8-BD16-2037F8FCE0FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{15A5A922-9B9E-4FB8-BD16-2037F8FCE0FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{15A5A922-9B9E-4FB8-BD16-2037F8FCE0FD}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {8CAC25B2-F5D7-4598-8100-335B0A703DB6}
+	EndGlobalSection
+EndGlobal

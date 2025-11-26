@@ -1,8 +1,8 @@
 ﻿<Window x:Class="RobocopyManager.SettingsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Global Settings" Height="550" Width="550"
-        WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+        Title="Global Settings" Height="650" Width="600"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>

@@ -18,12 +18,68 @@ namespace RobocopyManager
         private List<Process> runningProcesses = new List<Process>();
         private int jobIdCounter = 1;
         private System.Windows.Threading.DispatcherTimer schedulerTimer;
+        private readonly string configFilePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "RobocopyManager",
+            "config.json"
+        );
 
         public MainWindow()
         {
             InitializeComponent();
-            AddNewJob();
+            LoadConfigAutomatically();
             InitializeScheduler();
+        }
+
+        private void LoadConfigAutomatically()
+        {
+            try
+            {
+                if (File.Exists(configFilePath))
+                {
+                    var json = File.ReadAllText(configFilePath);
+                    var config = JsonSerializer.Deserialize<Config>(json);
+
+                    jobs = config.Jobs ?? new List<RobocopyJob>();
+                    settings = config.Settings ?? new GlobalSettings();
+                    jobIdCounter = jobs.Any() ? jobs.Max(j => j.Id) + 1 : 1;
+
+                    foreach (var job in jobs)
+                    {
+                        CreateJobUI(job);
+                    }
+
+                    Log($"Loaded {jobs.Count} saved job(s) from previous session");
+                }
+                else
+                {
+                    AddNewJob();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error loading saved configuration: {ex.Message}\nStarting with empty configuration.", "Load Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                AddNewJob();
+            }
+        }
+
+        private void SaveConfigAutomatically()
+        {
+            try
+            {
+                var configDir = Path.GetDirectoryName(configFilePath);
+                if (!Directory.Exists(configDir))
+                {
+                    Directory.CreateDirectory(configDir);
+                }
+
+                var config = new Config { Jobs = jobs, Settings = settings };
+                File.WriteAllText(configFilePath, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
+            }
+            catch (Exception ex)
+            {
+                Log($"Error auto-saving configuration: {ex.Message}");
+            }
         }
 
         private void InitializeScheduler()
@@ -70,6 +126,7 @@ namespace RobocopyManager
             var job = new RobocopyJob { Id = jobIdCounter++, Name = $"Job {jobIdCounter - 1}" };
             jobs.Add(job);
             CreateJobUI(job);
+            SaveConfigAutomatically();
         }
 
         private void CreateJobUI(RobocopyJob job)
@@ -96,11 +153,11 @@ namespace RobocopyManager
 
             var headerPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
             var chkEnabled = new CheckBox { IsChecked = true, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
-            chkEnabled.Checked += (s, e) => job.Enabled = true;
-            chkEnabled.Unchecked += (s, e) => job.Enabled = false;
+            chkEnabled.Checked += (s, e) => { job.Enabled = true; SaveConfigAutomatically(); };
+            chkEnabled.Unchecked += (s, e) => { job.Enabled = false; SaveConfigAutomatically(); };
 
             var txtName = new TextBox { Text = job.Name, Width = 200, Margin = new Thickness(0, 0, 10, 0) };
-            txtName.TextChanged += (s, e) => job.Name = txtName.Text;
+            txtName.TextChanged += (s, e) => { job.Name = txtName.Text; SaveConfigAutomatically(); };
 
             var btnDelete = new Button { Content = "Delete", Width = 80, Background = System.Windows.Media.Brushes.IndianRed, Foreground = System.Windows.Media.Brushes.White };
             btnDelete.Click += (s, e) => DeleteJob(border, job);
@@ -114,7 +171,7 @@ namespace RobocopyManager
             srcPanel.Children.Add(new TextBlock { Text = "Source Path:", FontWeight = FontWeights.Bold });
             var srcStack = new StackPanel { Orientation = Orientation.Horizontal };
             var txtSource = new TextBox { Width = 700, Margin = new Thickness(0, 2, 5, 0) };
-            txtSource.TextChanged += (s, e) => job.SourcePath = txtSource.Text;
+            txtSource.TextChanged += (s, e) => { job.SourcePath = txtSource.Text; SaveConfigAutomatically(); };
             var btnBrowseSrc = new Button { Content = "Browse...", Width = 80 };
             btnBrowseSrc.Click += (s, e) => BrowseFolder(txtSource);
             srcStack.Children.Add(txtSource);
@@ -126,7 +183,7 @@ namespace RobocopyManager
             dstPanel.Children.Add(new TextBlock { Text = "Destination Path:", FontWeight = FontWeights.Bold });
             var dstStack = new StackPanel { Orientation = Orientation.Horizontal };
             var txtDest = new TextBox { Width = 700, Margin = new Thickness(0, 2, 5, 0) };
-            txtDest.TextChanged += (s, e) => job.DestinationPath = txtDest.Text;
+            txtDest.TextChanged += (s, e) => { job.DestinationPath = txtDest.Text; SaveConfigAutomatically(); };
             var btnBrowseDst = new Button { Content = "Browse...", Width = 80 };
             btnBrowseDst.Click += (s, e) => BrowseFolder(txtDest);
             dstStack.Children.Add(txtDest);
@@ -138,7 +195,7 @@ namespace RobocopyManager
             threadPanel.Children.Add(new TextBlock { Text = "Thread Count: ", FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
             var sliderThreads = new Slider { Width = 300, Minimum = 1, Maximum = 128, Value = 8, Margin = new Thickness(5, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
             var lblThreads = new TextBlock { Text = "8", Width = 30, VerticalAlignment = VerticalAlignment.Center };
-            sliderThreads.ValueChanged += (s, e) => { job.Threads = (int)sliderThreads.Value; lblThreads.Text = job.Threads.ToString(); };
+            sliderThreads.ValueChanged += (s, e) => { job.Threads = (int)sliderThreads.Value; lblThreads.Text = job.Threads.ToString(); SaveConfigAutomatically(); };
             threadPanel.Children.Add(sliderThreads);
             threadPanel.Children.Add(lblThreads);
             threadPanel.Children.Add(new TextBlock { Text = " (Recommended: 8-32 for network)", FontStyle = FontStyles.Italic, Foreground = System.Windows.Media.Brushes.Gray, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) });
@@ -152,6 +209,34 @@ namespace RobocopyManager
             sliderThreads.ValueChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             cmdPanel.Children.Add(txtCommand);
             Grid.SetRow(cmdPanel, 4);
+
+            // Schedule
+            var schedulePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
+            var chkSchedule = new CheckBox { Content = "Run on schedule: ", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
+            chkSchedule.IsChecked = job.ScheduleEnabled;
+            chkSchedule.Checked += (s, e) => job.ScheduleEnabled = true;
+            chkSchedule.Unchecked += (s, e) => job.ScheduleEnabled = false;
+
+            var txtHour = new TextBox { Width = 40, Text = job.ScheduledTime.Hours.ToString("D2"), Margin = new Thickness(0, 0, 5, 0) };
+            var lblColon = new TextBlock { Text = ":", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 5, 0), FontWeight = FontWeights.Bold };
+            var txtMinute = new TextBox { Width = 40, Text = job.ScheduledTime.Minutes.ToString("D2"), Margin = new Thickness(0, 0, 5, 0) };
+            var lblExample = new TextBlock { Text = "(24-hour format, e.g., 18:00 for 6 PM)", FontStyle = FontStyles.Italic, Foreground = System.Windows.Media.Brushes.Gray, VerticalAlignment = VerticalAlignment.Center };
+
+            txtHour.TextChanged += (s, e) => {
+                if (int.TryParse(txtHour.Text, out int h) && h >= 0 && h <= 23)
+                    job.ScheduledTime = new TimeSpan(h, job.ScheduledTime.Minutes, 0);
+            };
+            txtMinute.TextChanged += (s, e) => {
+                if (int.TryParse(txtMinute.Text, out int m) && m >= 0 && m <= 59)
+                    job.ScheduledTime = new TimeSpan(job.ScheduledTime.Hours, m, 0);
+            };
+
+            schedulePanel.Children.Add(chkSchedule);
+            schedulePanel.Children.Add(txtHour);
+            schedulePanel.Children.Add(lblColon);
+            schedulePanel.Children.Add(txtMinute);
+            schedulePanel.Children.Add(lblExample);
+            Grid.SetRow(schedulePanel, 4);
 
             grid.Children.Add(headerPanel);
             grid.Children.Add(srcPanel);
@@ -168,6 +253,7 @@ namespace RobocopyManager
         {
             jobs.Remove(job);
             jobsPanel.Children.Remove(border);
+            SaveConfigAutomatically();
         }
 
         private void BrowseFolder(TextBox textBox)
@@ -496,7 +582,10 @@ namespace RobocopyManager
         {
             var settingsWindow = new SettingsWindow(settings);
             settingsWindow.Owner = this;
-            settingsWindow.ShowDialog();
+            if (settingsWindow.ShowDialog() == true)
+            {
+                SaveConfigAutomatically();
+            }
         }
 
         private void BtnSaveConfig_Click(object sender, RoutedEventArgs e)

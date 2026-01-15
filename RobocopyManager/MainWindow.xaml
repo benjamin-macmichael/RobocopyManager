@@ -13,6 +13,7 @@
             <Button x:Name="btnSettings" Content="Settings" Width="100" Height="35" Margin="5" Click="BtnSettings_Click"/>
             <Button x:Name="btnRunAll" Content="Run All Jobs" Width="120" Height="35" Margin="5" Background="#28a745" Foreground="White" FontWeight="Bold" Click="BtnRunAll_Click"/>
             <Button x:Name="btnStopAll" Content="Stop All" Width="100" Height="35" Margin="5" Background="#dc3545" Foreground="White" Click="BtnStopAll_Click" IsEnabled="False"/>
+            <Button x:Name="btnClearLog" Content="Clear Log" Width="100" Height="35" Margin="5" Background="#6c757d" Foreground="White" Click="BtnClearLog_Click"/>
         </StackPanel>
         <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="10">
             <StackPanel x:Name="jobsPanel">

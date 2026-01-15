@@ -97,17 +97,10 @@ namespace RobocopyManager
 
             var scheduledJobs = jobs.Where(j => j.Enabled && j.ScheduleEnabled).ToList();
 
-            if (scheduledJobs.Any())
-            {
-                Log($"[SCHEDULER] Checking at {now:HH:mm:ss} - Found {scheduledJobs.Count} scheduled job(s)");
-            }
-
             foreach (var job in scheduledJobs)
             {
                 var scheduledTime = job.ScheduledTime;
                 var timeDiff = Math.Abs((currentTime - scheduledTime).TotalMinutes);
-
-                Log($"[SCHEDULER] Job '{job.Name}': Scheduled={scheduledTime:hh\\:mm}, Current={currentTime:hh\\:mm}, Diff={timeDiff:F2} min, LastRun={job.LastRun?.ToString("yyyy-MM-dd HH:mm:ss") ?? "Never"}");
 
                 // Only run if we're within 1 minute AND haven't run in the last 2 minutes (prevents duplicate runs)
                 bool withinScheduleWindow = timeDiff < 1;
@@ -115,14 +108,10 @@ namespace RobocopyManager
 
                 if (withinScheduleWindow && notRecentlyRun)
                 {
-                    Log($"[SCHEDULER] ✓ Triggering scheduled job: {job.Name} at {now:HH:mm:ss}");
+                    Log($"[SCHEDULER] Triggering scheduled job: {job.Name} at {now:HH:mm:ss}");
                     job.LastRun = now;
                     SaveConfigAutomatically();
                     Task.Run(() => ExecuteRobocopy(job));
-                }
-                else if (withinScheduleWindow && !notRecentlyRun)
-                {
-                    Log($"[SCHEDULER] Job '{job.Name}': Skipping - already ran {(now - job.LastRun.Value).TotalMinutes:F1} minutes ago");
                 }
             }
         }
@@ -166,11 +155,15 @@ namespace RobocopyManager
             var txtName = new TextBox { Text = job.Name, Width = 200, Margin = new Thickness(0, 0, 10, 0) };
             txtName.TextChanged += (s, e) => { job.Name = txtName.Text; SaveConfigAutomatically(); };
 
+            var btnRunNow = new Button { Content = "Run Now", Width = 80, Background = System.Windows.Media.Brushes.DodgerBlue, Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(0, 0, 10, 0) };
+            btnRunNow.Click += (s, e) => RunSingleJob(job, btnRunNow);
+
             var btnDelete = new Button { Content = "Delete", Width = 80, Background = System.Windows.Media.Brushes.IndianRed, Foreground = System.Windows.Media.Brushes.White };
             btnDelete.Click += (s, e) => DeleteJob(border, job);
 
             headerPanel.Children.Add(chkEnabled);
             headerPanel.Children.Add(txtName);
+            headerPanel.Children.Add(btnRunNow);
             headerPanel.Children.Add(btnDelete);
             Grid.SetRow(headerPanel, 0);
 
@@ -261,6 +254,30 @@ namespace RobocopyManager
             jobsPanel.Children.Insert(jobsPanel.Children.Count - 1, border);
         }
 
+        private async void RunSingleJob(RobocopyJob job, Button btnRunNow)
+        {
+            if (string.IsNullOrWhiteSpace(job.SourcePath) || string.IsNullOrWhiteSpace(job.DestinationPath))
+            {
+                MessageBox.Show("Please configure source and destination paths before running.", "Invalid Configuration", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            btnRunNow.IsEnabled = false;
+            btnRunNow.Content = "Running...";
+
+            Log("========================================");
+            Log($"Starting single job: {job.Name} at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            Log("========================================\n");
+
+            await Task.Run(() => ExecuteRobocopy(job));
+
+            Log($"\n[{job.Name}] Job completed at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            Log("========================================\n");
+
+            btnRunNow.IsEnabled = true;
+            btnRunNow.Content = "Run Now";
+        }
+
         private void DeleteJob(Border border, RobocopyJob job)
         {
             var result = MessageBox.Show($"Are you sure you want to delete '{job.Name}'?", "Confirm Delete", MessageBoxButton.YesNo, MessageBoxImage.Question);
@@ -306,6 +323,13 @@ namespace RobocopyManager
 
             if (settings.PurgeDestination && !settings.MirrorMode)
                 cmd += " /PURGE";
+
+            // Exclude the version folder from robocopy operations
+            // This excludes any directory named "OldVersions" (or whatever is configured) anywhere in the tree
+            if (settings.EnableVersioning && !string.IsNullOrWhiteSpace(settings.VersionFolder))
+            {
+                cmd += $" /XD \"{settings.VersionFolder}\"";
+            }
 
             return cmd;
         }
@@ -420,18 +444,42 @@ namespace RobocopyManager
                 Log($"[{job.Name}] Destination: {job.DestinationPath}");
 
                 var versionPath = Path.Combine(job.DestinationPath, settings.VersionFolder);
-                Directory.CreateDirectory(versionPath);
-                Log($"[{job.Name}] Archive location: {versionPath}");
+
+                // CRITICAL: Create the directory FIRST to test if directory creation works
+                if (!Directory.Exists(versionPath))
+                {
+                    Log($"[{job.Name}] Creating archive directory: {versionPath}");
+                    Directory.CreateDirectory(versionPath);
+
+                    if (Directory.Exists(versionPath))
+                    {
+                        Log($"[{job.Name}] ✓ Archive directory created successfully");
+                    }
+                    else
+                    {
+                        Log($"[{job.Name}] ✗ ERROR: Failed to create archive directory!");
+                        return;
+                    }
+                }
+                else
+                {
+                    Log($"[{job.Name}] Archive directory already exists: {versionPath}");
+                }
 
                 // Get all files in source
                 var sourceFiles = Directory.GetFiles(job.SourcePath, "*.*", SearchOption.AllDirectories);
                 Log($"[{job.Name}] Found {sourceFiles.Length} file(s) in source");
 
                 int archivedCount = 0;
+                int skippedSameOrNewer = 0;
+                int skippedNewFiles = 0;
+
                 foreach (var sourceFile in sourceFiles)
                 {
                     var relativePath = sourceFile.Substring(job.SourcePath.Length).TrimStart('\\');
                     var destFile = Path.Combine(job.DestinationPath, relativePath);
+
+                    Log($"[{job.Name}] Checking: {relativePath}");
 
                     // If file exists in destination and will be overwritten
                     if (File.Exists(destFile))
@@ -439,13 +487,16 @@ namespace RobocopyManager
                         var sourceInfo = new FileInfo(sourceFile);
                         var destInfo = new FileInfo(destFile);
 
-                        Log($"[{job.Name}] Comparing: {relativePath}");
-                        Log($"[{job.Name}]   Source modified: {sourceInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}");
-                        Log($"[{job.Name}]   Dest modified: {destInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss}");
+                        Log($"[{job.Name}]   Source time: {sourceInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss.fff}");
+                        Log($"[{job.Name}]   Dest time:   {destInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss.fff}");
+                        Log($"[{job.Name}]   Difference:  {(sourceInfo.LastWriteTime - destInfo.LastWriteTime).TotalSeconds:F2} seconds");
 
                         // Check if source is newer (will be overwritten by robocopy)
-                        if (sourceInfo.LastWriteTime > destInfo.LastWriteTime)
+                        // Using > 2 seconds difference to account for file system timestamp precision
+                        if ((sourceInfo.LastWriteTime - destInfo.LastWriteTime).TotalSeconds > 2)
                         {
+                            Log($"[{job.Name}]   → Source is NEWER - will archive destination");
+
                             // Archive the old version
                             var timestamp = destInfo.LastWriteTime.ToString("yyyy-MM-dd_HH-mm-ss");
                             var fileName = Path.GetFileNameWithoutExtension(destFile);
@@ -457,32 +508,48 @@ namespace RobocopyManager
                                 ? versionPath
                                 : Path.Combine(versionPath, relativeDir);
 
+                            Log($"[{job.Name}]   Creating version directory: {versionDir}");
                             Directory.CreateDirectory(versionDir);
+
                             var versionFilePath = Path.Combine(versionDir, versionFileName);
+                            Log($"[{job.Name}]   Copying to: {versionFilePath}");
 
                             File.Copy(destFile, versionFilePath, true);
-                            archivedCount++;
-                            Log($"[{job.Name}] ✓ Archived to: {versionFilePath}");
+
+                            // Verify the file was actually created
+                            if (File.Exists(versionFilePath))
+                            {
+                                var archivedInfo = new FileInfo(versionFilePath);
+                                Log($"[{job.Name}]   ✓ VERIFIED: Archived file exists ({archivedInfo.Length} bytes)");
+                                archivedCount++;
+                            }
+                            else
+                            {
+                                Log($"[{job.Name}]   ✗ ERROR: Archived file does NOT exist!");
+                            }
                         }
                         else
                         {
-                            Log($"[{job.Name}]   Skipped - destination is same or newer");
+                            Log($"[{job.Name}]   → Skipped - destination is same age or newer");
+                            skippedSameOrNewer++;
                         }
                     }
                     else
                     {
-                        Log($"[{job.Name}] Skipped (new file): {relativePath}");
+                        Log($"[{job.Name}]   → Skipped - new file (doesn't exist in destination yet)");
+                        skippedNewFiles++;
                     }
                 }
 
+                Log($"[{job.Name}] Summary:");
+                Log($"[{job.Name}]   - Archived: {archivedCount} file(s)");
+                Log($"[{job.Name}]   - Skipped (same/newer): {skippedSameOrNewer} file(s)");
+                Log($"[{job.Name}]   - Skipped (new files): {skippedNewFiles} file(s)");
+                Log($"[{job.Name}]   - Archive location: {versionPath}");
+
                 if (archivedCount > 0)
                 {
-                    Log($"[{job.Name}] Total archived: {archivedCount} file(s) to {versionPath}");
                     CleanupOldVersions(versionPath, job.Name);
-                }
-                else
-                {
-                    Log($"[{job.Name}] No files needed archiving");
                 }
             }
             catch (Exception ex)
@@ -510,16 +577,18 @@ namespace RobocopyManager
                 if (settings.DaysToKeepVersions > 0)
                 {
                     var cutoffDate = DateTime.Now.AddDays(-settings.DaysToKeepVersions);
-                    Log($"[{jobName}] Checking for files older than {cutoffDate:yyyy-MM-dd HH:mm:ss} ({settings.DaysToKeepVersions} days)");
+                    Log($"[{jobName}] Deleting files older than: {cutoffDate:yyyy-MM-dd HH:mm:ss} ({settings.DaysToKeepVersions} days ago)");
+                    Log($"[{jobName}] Current time: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
 
                     var oldFiles = allVersionFiles.Where(f => f.LastWriteTime < cutoffDate).ToList();
-                    Log($"[{jobName}] Found {oldFiles.Count} file(s) older than {settings.DaysToKeepVersions} days");
+                    Log($"[{jobName}] Found {oldFiles.Count} file(s) older than cutoff date");
 
                     foreach (var oldFile in oldFiles)
                     {
                         try
                         {
-                            Log($"[{jobName}] Deleting old file: {oldFile.Name} (modified: {oldFile.LastWriteTime:yyyy-MM-dd HH:mm:ss})");
+                            var age = (DateTime.Now - oldFile.LastWriteTime).TotalDays;
+                            Log($"[{jobName}] Deleting: {oldFile.Name} (age: {age:F1} days, modified: {oldFile.LastWriteTime:yyyy-MM-dd HH:mm:ss})");
                             oldFile.Delete();
                             deletedCount++;
                         }
@@ -531,13 +600,21 @@ namespace RobocopyManager
 
                     if (deletedCount > 0)
                     {
-                        Log($"[{jobName}] Cleaned up {deletedCount} version(s) older than {settings.DaysToKeepVersions} days");
+                        Log($"[{jobName}] ✓ Cleaned up {deletedCount} version(s) older than {settings.DaysToKeepVersions} days");
+                    }
+                    else
+                    {
+                        Log($"[{jobName}] No files older than {settings.DaysToKeepVersions} days to delete");
                     }
 
                     // Refresh the list after deleting old files
                     allVersionFiles = Directory.GetFiles(versionPath, "*.*", SearchOption.AllDirectories)
                         .Select(f => new FileInfo(f))
                         .ToList();
+                }
+                else
+                {
+                    Log($"[{jobName}] Days to keep is 0 - not deleting by age");
                 }
 
                 // Limit max versions per file
@@ -557,12 +634,13 @@ namespace RobocopyManager
                     int versionLimitDeleted = 0;
                     foreach (var group in fileGroups)
                     {
-                        var versionsToDelete = group
-                            .OrderByDescending(f => f.LastWriteTime)
-                            .Skip(settings.MaxVersionsPerFile)
-                            .ToList();
+                        var groupList = group.OrderByDescending(f => f.LastWriteTime).ToList();
+                        var versionsToDelete = groupList.Skip(settings.MaxVersionsPerFile).ToList();
 
-                        Log($"[{jobName}] File group '{Path.GetFileName(group.Key)}': {group.Count()} versions, deleting {versionsToDelete.Count}");
+                        if (versionsToDelete.Any())
+                        {
+                            Log($"[{jobName}] File '{Path.GetFileName(group.Key)}': {groupList.Count} versions, keeping newest {settings.MaxVersionsPerFile}, deleting {versionsToDelete.Count}");
+                        }
 
                         foreach (var oldFile in versionsToDelete)
                         {
@@ -581,7 +659,7 @@ namespace RobocopyManager
 
                     if (versionLimitDeleted > 0)
                     {
-                        Log($"[{jobName}] Cleaned up {versionLimitDeleted} version(s) exceeding max {settings.MaxVersionsPerFile} per file");
+                        Log($"[{jobName}] ✓ Cleaned up {versionLimitDeleted} version(s) exceeding max {settings.MaxVersionsPerFile} per file");
                     }
                 }
                 else
@@ -658,6 +736,12 @@ namespace RobocopyManager
             {
                 SaveConfigAutomatically();
             }
+        }
+
+        private void BtnClearLog_Click(object sender, RoutedEventArgs e)
+        {
+            txtLog.Clear();
+            Log("Log cleared");
         }
 
         private void BtnAddJob_Click(object sender, RoutedEventArgs e)

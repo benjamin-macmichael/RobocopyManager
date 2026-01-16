@@ -16,6 +16,7 @@ namespace RobocopyManager
         private List<RobocopyJob> jobs = new List<RobocopyJob>();
         private GlobalSettings settings = new GlobalSettings();
         private List<Process> runningProcesses = new List<Process>();
+        private Dictionary<int, Process> jobProcesses = new Dictionary<int, Process>(); // Track which process belongs to which job
         private int jobIdCounter = 1;
         private System.Windows.Threading.DispatcherTimer schedulerTimer = null;
         private readonly string configFilePath = Path.Combine(
@@ -146,6 +147,7 @@ namespace RobocopyManager
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             var headerPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
             var chkEnabled = new CheckBox { IsChecked = job.Enabled, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
@@ -155,8 +157,11 @@ namespace RobocopyManager
             var txtName = new TextBox { Text = job.Name, Width = 200, Margin = new Thickness(0, 0, 10, 0) };
             txtName.TextChanged += (s, e) => { job.Name = txtName.Text; SaveConfigAutomatically(); };
 
-            var btnRunNow = new Button { Content = "Run Now", Width = 80, Background = System.Windows.Media.Brushes.DodgerBlue, Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(0, 0, 10, 0) };
-            btnRunNow.Click += (s, e) => RunSingleJob(job, btnRunNow);
+            var btnRunNow = new Button { Content = "Run Now", Width = 80, Background = System.Windows.Media.Brushes.DodgerBlue, Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(0, 0, 5, 0) };
+            var btnCancelJob = new Button { Content = "Cancel", Width = 80, Background = System.Windows.Media.Brushes.Orange, Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(0, 0, 10, 0), IsEnabled = false };
+
+            btnRunNow.Click += (s, e) => RunSingleJob(job, btnRunNow, btnCancelJob);
+            btnCancelJob.Click += (s, e) => CancelSingleJob(job, btnRunNow, btnCancelJob);
 
             var btnDelete = new Button { Content = "Delete", Width = 80, Background = System.Windows.Media.Brushes.IndianRed, Foreground = System.Windows.Media.Brushes.White };
             btnDelete.Click += (s, e) => DeleteJob(border, job);
@@ -164,6 +169,7 @@ namespace RobocopyManager
             headerPanel.Children.Add(chkEnabled);
             headerPanel.Children.Add(txtName);
             headerPanel.Children.Add(btnRunNow);
+            headerPanel.Children.Add(btnCancelJob);
             headerPanel.Children.Add(btnDelete);
             Grid.SetRow(headerPanel, 0);
 
@@ -191,6 +197,13 @@ namespace RobocopyManager
             dstPanel.Children.Add(dstStack);
             Grid.SetRow(dstPanel, 2);
 
+            var excludePanel = new StackPanel { Margin = new Thickness(0, 5, 0, 5) };
+            excludePanel.Children.Add(new TextBlock { Text = "Exclude Directories (comma-separated, e.g., temp, .git, node_modules):", FontWeight = FontWeights.Bold });
+            var txtExclude = new TextBox { Width = 788, Margin = new Thickness(0, 2, 0, 0), Text = job.ExcludedDirectories };
+            txtExclude.TextChanged += (s, e) => { job.ExcludedDirectories = txtExclude.Text; SaveConfigAutomatically(); };
+            excludePanel.Children.Add(txtExclude);
+            Grid.SetRow(excludePanel, 3);
+
             var threadPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
             threadPanel.Children.Add(new TextBlock { Text = "Thread Count: ", FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
             var sliderThreads = new Slider { Width = 300, Minimum = 1, Maximum = 128, Value = job.Threads, Margin = new Thickness(5, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -199,7 +212,7 @@ namespace RobocopyManager
             threadPanel.Children.Add(sliderThreads);
             threadPanel.Children.Add(lblThreads);
             threadPanel.Children.Add(new TextBlock { Text = " (Recommended: 8-32 for network)", FontStyle = FontStyles.Italic, Foreground = System.Windows.Media.Brushes.Gray, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) });
-            Grid.SetRow(threadPanel, 3);
+            Grid.SetRow(threadPanel, 4);
 
             var schedulePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
             var chkSchedule = new CheckBox { Content = "Run on schedule: ", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
@@ -232,20 +245,22 @@ namespace RobocopyManager
             schedulePanel.Children.Add(lblColon);
             schedulePanel.Children.Add(txtMinute);
             schedulePanel.Children.Add(lblExample);
-            Grid.SetRow(schedulePanel, 4);
+            Grid.SetRow(schedulePanel, 5);
 
             var cmdPanel = new StackPanel { Margin = new Thickness(0, 5, 0, 0) };
             var txtCommand = new TextBox { IsReadOnly = true, Background = System.Windows.Media.Brushes.Black, Foreground = System.Windows.Media.Brushes.LightGreen, FontFamily = new System.Windows.Media.FontFamily("Consolas"), Padding = new Thickness(5), TextWrapping = TextWrapping.Wrap };
             txtCommand.Text = GenerateRobocopyCommand(job);
             txtSource.TextChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             txtDest.TextChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
+            txtExclude.TextChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             sliderThreads.ValueChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             cmdPanel.Children.Add(txtCommand);
-            Grid.SetRow(cmdPanel, 5);
+            Grid.SetRow(cmdPanel, 6);
 
             grid.Children.Add(headerPanel);
             grid.Children.Add(srcPanel);
             grid.Children.Add(dstPanel);
+            grid.Children.Add(excludePanel);
             grid.Children.Add(threadPanel);
             grid.Children.Add(schedulePanel);
             grid.Children.Add(cmdPanel);
@@ -254,7 +269,7 @@ namespace RobocopyManager
             jobsPanel.Children.Insert(jobsPanel.Children.Count - 1, border);
         }
 
-        private async void RunSingleJob(RobocopyJob job, Button btnRunNow)
+        private async void RunSingleJob(RobocopyJob job, Button btnRunNow, Button btnCancelJob)
         {
             if (string.IsNullOrWhiteSpace(job.SourcePath) || string.IsNullOrWhiteSpace(job.DestinationPath))
             {
@@ -264,6 +279,7 @@ namespace RobocopyManager
 
             btnRunNow.IsEnabled = false;
             btnRunNow.Content = "Running...";
+            btnCancelJob.IsEnabled = true;
 
             Log("========================================");
             Log($"Starting single job: {job.Name} at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
@@ -276,6 +292,35 @@ namespace RobocopyManager
 
             btnRunNow.IsEnabled = true;
             btnRunNow.Content = "Run Now";
+            btnCancelJob.IsEnabled = false;
+        }
+
+        private void CancelSingleJob(RobocopyJob job, Button btnRunNow, Button btnCancelJob)
+        {
+            lock (jobProcesses)
+            {
+                if (jobProcesses.ContainsKey(job.Id))
+                {
+                    try
+                    {
+                        var process = jobProcesses[job.Id];
+                        if (!process.HasExited)
+                        {
+                            process.Kill();
+                            Log($"[{job.Name}] Job cancelled by user.");
+                        }
+                        jobProcesses.Remove(job.Id);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"[{job.Name}] Error cancelling job: {ex.Message}");
+                    }
+                }
+            }
+
+            btnRunNow.IsEnabled = true;
+            btnRunNow.Content = "Run Now";
+            btnCancelJob.IsEnabled = false;
         }
 
         private void DeleteJob(Border border, RobocopyJob job)
@@ -329,6 +374,19 @@ namespace RobocopyManager
             if (settings.EnableVersioning && !string.IsNullOrWhiteSpace(settings.VersionFolder))
             {
                 cmd += $" /XD \"{settings.VersionFolder}\"";
+            }
+
+            // Add user-specified excluded directories
+            if (!string.IsNullOrWhiteSpace(job.ExcludedDirectories))
+            {
+                var excludedDirs = job.ExcludedDirectories.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(d => d.Trim())
+                    .Where(d => !string.IsNullOrWhiteSpace(d));
+
+                foreach (var dir in excludedDirs)
+                {
+                    cmd += $" /XD \"{dir}\"";
+                }
             }
 
             return cmd;
@@ -396,6 +454,11 @@ namespace RobocopyManager
                     runningProcesses.Add(process);
                 }
 
+                lock (jobProcesses)
+                {
+                    jobProcesses[job.Id] = process;
+                }
+
                 process.OutputDataReceived += (s, e) => { if (!string.IsNullOrEmpty(e.Data)) Log($"[{job.Name}] {e.Data}"); };
                 process.ErrorDataReceived += (s, e) => { if (!string.IsNullOrEmpty(e.Data)) Log($"[{job.Name}] ERROR: {e.Data}"); };
 
@@ -407,6 +470,11 @@ namespace RobocopyManager
                 lock (runningProcesses)
                 {
                     runningProcesses.Remove(process);
+                }
+
+                lock (jobProcesses)
+                {
+                    jobProcesses.Remove(job.Id);
                 }
 
                 Log($"[{job.Name}] Completed with exit code: {process.ExitCode}\n");
@@ -767,6 +835,7 @@ namespace RobocopyManager
         public bool ScheduleEnabled { get; set; } = false;
         public TimeSpan ScheduledTime { get; set; } = new TimeSpan(18, 0, 0);
         public DateTime? LastRun { get; set; }
+        public string ExcludedDirectories { get; set; } = ""; // Comma-separated list of folders to exclude
     }
 
     public class GlobalSettings
@@ -778,7 +847,7 @@ namespace RobocopyManager
         public bool PurgeDestination { get; set; } = false;
         public bool MirrorMode { get; set; } = true;
         public bool EnableVersioning { get; set; } = true;
-        public string VersionFolder { get; set; } = "OldVersions";
+        public string VersionFolder { get; set; } = "OldVersions"; // Always "OldVersions", not user-configurable
         public int DaysToKeepVersions { get; set; } = 30;
         public int MaxVersionsPerFile { get; set; } = 0;
     }

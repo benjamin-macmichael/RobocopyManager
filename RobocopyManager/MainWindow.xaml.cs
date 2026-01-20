@@ -112,6 +112,10 @@ namespace RobocopyManager
                     Log($"[SCHEDULER] Triggering scheduled job: {job.Name} at {now:HH:mm:ss}");
                     job.LastRun = now;
                     SaveConfigAutomatically();
+
+                    // Enable Stop All button when scheduled job starts
+                    Dispatcher.Invoke(() => btnStopAll.IsEnabled = true);
+
                     Task.Run(() => ExecuteRobocopy(job));
                 }
             }
@@ -477,6 +481,18 @@ namespace RobocopyManager
                     jobProcesses.Remove(job.Id);
                 }
 
+                // Disable Stop All button if no more jobs are running
+                bool anyRunning = false;
+                lock (runningProcesses)
+                {
+                    anyRunning = runningProcesses.Any();
+                }
+
+                if (!anyRunning)
+                {
+                    Dispatcher.Invoke(() => btnStopAll.IsEnabled = false);
+                }
+
                 Log($"[{job.Name}] Completed with exit code: {process.ExitCode}\n");
             }
             catch (Exception ex)
@@ -820,6 +836,55 @@ namespace RobocopyManager
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
             base.OnClosing(e);
+
+            // Check if any jobs are running
+            bool anyRunning = false;
+            lock (runningProcesses)
+            {
+                anyRunning = runningProcesses.Any();
+            }
+
+            if (anyRunning)
+            {
+                var result = MessageBox.Show(
+                    "Jobs are currently running. Do you want to stop them and exit?",
+                    "Jobs Running",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Warning);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    // Stop all running jobs
+                    lock (runningProcesses)
+                    {
+                        foreach (var proc in runningProcesses.ToList())
+                        {
+                            try
+                            {
+                                if (!proc.HasExited)
+                                {
+                                    proc.Kill();
+                                    Log("Process terminated due to application exit.");
+                                }
+                            }
+                            catch { }
+                        }
+                        runningProcesses.Clear();
+                    }
+
+                    lock (jobProcesses)
+                    {
+                        jobProcesses.Clear();
+                    }
+                }
+                else
+                {
+                    // Cancel the close
+                    e.Cancel = true;
+                    return;
+                }
+            }
+
             SaveConfigAutomatically();
         }
     }

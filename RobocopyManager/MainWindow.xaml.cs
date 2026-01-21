@@ -18,7 +18,13 @@ namespace RobocopyManager
         private List<Process> runningProcesses = new List<Process>();
         private Dictionary<int, Process> jobProcesses = new Dictionary<int, Process>(); // Track which process belongs to which job
         private int jobIdCounter = 1;
-        private System.Windows.Threading.DispatcherTimer schedulerTimer = null;
+        private System.Threading.Timer schedulerTimer = null;
+        private readonly string logDirectory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "RobocopyManager",
+            "Logs"
+        );
+        private StreamWriter logFileWriter = null;
         private readonly string configFilePath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "RobocopyManager",
@@ -28,8 +34,71 @@ namespace RobocopyManager
         public MainWindow()
         {
             InitializeComponent();
+            InitializeLogFile();
             LoadConfigAutomatically();
             InitializeScheduler();
+        }
+
+        private void InitializeLogFile()
+        {
+            try
+            {
+                // Create logs directory if it doesn't exist
+                if (!Directory.Exists(logDirectory))
+                {
+                    Directory.CreateDirectory(logDirectory);
+                }
+
+                // Create log file with today's date
+                var logFileName = $"RobocopyManager_{DateTime.Now:yyyy-MM-dd}.log";
+                var logFilePath = Path.Combine(logDirectory, logFileName);
+
+                // Open file for appending
+                logFileWriter = new StreamWriter(logFilePath, append: true)
+                {
+                    AutoFlush = true // Ensure logs are written immediately
+                };
+
+                Log($"=== Application started at {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+                Log($"Log file: {logFilePath}");
+
+                // Clean up old log files (keep last 30 days)
+                CleanupOldLogFiles();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error initializing log file: {ex.Message}", "Logging Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        private void CleanupOldLogFiles()
+        {
+            try
+            {
+                var cutoffDate = DateTime.Now.AddDays(-30);
+                var logFiles = Directory.GetFiles(logDirectory, "RobocopyManager_*.log");
+
+                foreach (var logFile in logFiles)
+                {
+                    var fileInfo = new FileInfo(logFile);
+                    if (fileInfo.LastWriteTime < cutoffDate)
+                    {
+                        try
+                        {
+                            File.Delete(logFile);
+                            Log($"Deleted old log file: {Path.GetFileName(logFile)}");
+                        }
+                        catch
+                        {
+                            // Skip files we can't delete
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Fail silently if we can't clean up logs
+            }
         }
 
         private void LoadConfigAutomatically()
@@ -84,14 +153,18 @@ namespace RobocopyManager
 
         private void InitializeScheduler()
         {
-            schedulerTimer = new System.Windows.Threading.DispatcherTimer();
-            schedulerTimer.Interval = TimeSpan.FromMinutes(1);
-            schedulerTimer.Tick += SchedulerTimer_Tick;
-            schedulerTimer.Start();
-            Log("Scheduler started - checking every minute for scheduled jobs");
+            // Use System.Threading.Timer instead of DispatcherTimer for reliable background operation
+            // This works properly even when RDP is disconnected or screen is locked
+            schedulerTimer = new System.Threading.Timer(
+                SchedulerTimer_Tick,
+                null,
+                TimeSpan.FromSeconds(10), // Start after 10 seconds
+                TimeSpan.FromMinutes(1)   // Check every minute
+            );
+            Log("Scheduler started - checking every minute for scheduled jobs (background timer)");
         }
 
-        private void SchedulerTimer_Tick(object sender, EventArgs e)
+        private void SchedulerTimer_Tick(object state)
         {
             var now = DateTime.Now;
             var currentTime = now.TimeOfDay;
@@ -107,16 +180,33 @@ namespace RobocopyManager
                 bool withinScheduleWindow = timeDiff < 1;
                 bool notRecentlyRun = !job.LastRun.HasValue || (now - job.LastRun.Value).TotalMinutes >= 2;
 
-                if (withinScheduleWindow && notRecentlyRun)
+                // Only check if within schedule window
+                if (withinScheduleWindow)
                 {
-                    Log($"[SCHEDULER] Triggering scheduled job: {job.Name} at {now:HH:mm:ss}");
-                    job.LastRun = now;
-                    SaveConfigAutomatically();
+                    // CRITICAL: Check if job is already running
+                    bool isCurrentlyRunning = false;
+                    lock (jobProcesses)
+                    {
+                        isCurrentlyRunning = jobProcesses.ContainsKey(job.Id);
+                    }
 
-                    // Enable Stop All button when scheduled job starts
-                    Dispatcher.Invoke(() => btnStopAll.IsEnabled = true);
+                    if (isCurrentlyRunning)
+                    {
+                        // Don't spam the log - skip silently
+                        continue;
+                    }
 
-                    Task.Run(() => ExecuteRobocopy(job));
+                    if (notRecentlyRun)
+                    {
+                        Log($"[SCHEDULER] Triggering scheduled job: {job.Name} at {now:HH:mm:ss}");
+                        job.LastRun = now;
+                        SaveConfigAutomatically();
+
+                        // Enable Stop All button when scheduled job starts (must use Dispatcher since we're on background thread)
+                        Dispatcher.Invoke(() => btnStopAll.IsEnabled = true);
+
+                        Task.Run(() => ExecuteRobocopy(job));
+                    }
                 }
             }
         }
@@ -281,6 +371,19 @@ namespace RobocopyManager
                 return;
             }
 
+            // Check if job is already running
+            bool isRunning = false;
+            lock (jobProcesses)
+            {
+                isRunning = jobProcesses.ContainsKey(job.Id);
+            }
+
+            if (isRunning)
+            {
+                MessageBox.Show($"Job '{job.Name}' is already running. Please wait for it to complete or cancel it first.", "Job Already Running", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             btnRunNow.IsEnabled = false;
             btnRunNow.Content = "Running...";
             btnCancelJob.IsEnabled = true;
@@ -368,29 +471,41 @@ namespace RobocopyManager
             cmd += $" /MT:{job.Threads}";
             cmd += $" /R:{settings.Retries}";
             cmd += $" /W:{settings.WaitTime}";
-            cmd += " /NP /V /TS";
+            cmd += " /NP"; // No progress percentage
+            cmd += " /A-:SH"; // Strip System and Hidden attributes
 
             if (settings.PurgeDestination && !settings.MirrorMode)
                 cmd += " /PURGE";
 
+            // Build list of excluded directories
+            var excludedDirs = new List<string>();
+
+            // Always exclude common Windows system folders
+            excludedDirs.Add("$RECYCLE.BIN");
+            excludedDirs.Add("System Volume Information");
+            excludedDirs.Add("$Recycle.Bin");
+            excludedDirs.Add("Recycler");
+
             // Exclude the version folder from robocopy operations
-            // This excludes any directory named "OldVersions" (or whatever is configured) anywhere in the tree
             if (settings.EnableVersioning && !string.IsNullOrWhiteSpace(settings.VersionFolder))
             {
-                cmd += $" /XD \"{settings.VersionFolder}\"";
+                excludedDirs.Add(settings.VersionFolder);
             }
 
             // Add user-specified excluded directories
             if (!string.IsNullOrWhiteSpace(job.ExcludedDirectories))
             {
-                var excludedDirs = job.ExcludedDirectories.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                var userExcluded = job.ExcludedDirectories.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
                     .Select(d => d.Trim())
                     .Where(d => !string.IsNullOrWhiteSpace(d));
 
-                foreach (var dir in excludedDirs)
-                {
-                    cmd += $" /XD \"{dir}\"";
-                }
+                excludedDirs.AddRange(userExcluded);
+            }
+
+            // Add each exclusion with its own /XD flag (safest approach)
+            foreach (var dir in excludedDirs)
+            {
+                cmd += $" /XD \"{dir}\"";
             }
 
             return cmd;
@@ -550,66 +665,48 @@ namespace RobocopyManager
                     Log($"[{job.Name}] Archive directory already exists: {versionPath}");
                 }
 
-                // Get all files in source
-                var sourceFiles = Directory.GetFiles(job.SourcePath, "*.*", SearchOption.AllDirectories);
-                Log($"[{job.Name}] Found {sourceFiles.Length} file(s) in source");
+                // Get all files in source and destination
+                var sourceFiles = Directory.Exists(job.SourcePath)
+                    ? Directory.GetFiles(job.SourcePath, "*.*", SearchOption.AllDirectories)
+                        .Select(f => f.Substring(job.SourcePath.Length).TrimStart('\\'))
+                        .ToHashSet()
+                    : new HashSet<string>();
+
+                var destFiles = Directory.GetFiles(job.DestinationPath, "*.*", SearchOption.AllDirectories)
+                    .Where(f => !f.StartsWith(versionPath, StringComparison.OrdinalIgnoreCase)); // Exclude OldVersions folder itself
+
+                Log($"[{job.Name}] Found {sourceFiles.Count} file(s) in source");
+                Log($"[{job.Name}] Found {destFiles.Count()} file(s) in destination");
 
                 int archivedCount = 0;
                 int skippedSameOrNewer = 0;
                 int skippedNewFiles = 0;
 
-                foreach (var sourceFile in sourceFiles)
+                foreach (var destFilePath in destFiles)
                 {
-                    var relativePath = sourceFile.Substring(job.SourcePath.Length).TrimStart('\\');
-                    var destFile = Path.Combine(job.DestinationPath, relativePath);
+                    var relativePath = destFilePath.Substring(job.DestinationPath.Length).TrimStart('\\');
+                    var sourceFilePath = Path.Combine(job.SourcePath, relativePath);
 
                     Log($"[{job.Name}] Checking: {relativePath}");
 
-                    // If file exists in destination and will be overwritten
-                    if (File.Exists(destFile))
+                    // Case 1: File exists in BOTH source and destination
+                    if (sourceFiles.Contains(relativePath))
                     {
-                        var sourceInfo = new FileInfo(sourceFile);
-                        var destInfo = new FileInfo(destFile);
+                        var sourceInfo = new FileInfo(sourceFilePath);
+                        var destInfo = new FileInfo(destFilePath);
 
                         Log($"[{job.Name}]   Source time: {sourceInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss.fff}");
                         Log($"[{job.Name}]   Dest time:   {destInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss.fff}");
                         Log($"[{job.Name}]   Difference:  {(sourceInfo.LastWriteTime - destInfo.LastWriteTime).TotalSeconds:F2} seconds");
 
                         // Check if source is newer (will be overwritten by robocopy)
-                        // Using > 2 seconds difference to account for file system timestamp precision
                         if ((sourceInfo.LastWriteTime - destInfo.LastWriteTime).TotalSeconds > 2)
                         {
                             Log($"[{job.Name}]   → Source is NEWER - will archive destination");
 
-                            // Archive the old version
-                            var timestamp = destInfo.LastWriteTime.ToString("yyyy-MM-dd_HH-mm-ss");
-                            var fileName = Path.GetFileNameWithoutExtension(destFile);
-                            var extension = Path.GetExtension(destFile);
-                            var versionFileName = $"{fileName}_{timestamp}{extension}";
-
-                            var relativeDir = Path.GetDirectoryName(relativePath);
-                            var versionDir = string.IsNullOrEmpty(relativeDir)
-                                ? versionPath
-                                : Path.Combine(versionPath, relativeDir);
-
-                            Log($"[{job.Name}]   Creating version directory: {versionDir}");
-                            Directory.CreateDirectory(versionDir);
-
-                            var versionFilePath = Path.Combine(versionDir, versionFileName);
-                            Log($"[{job.Name}]   Copying to: {versionFilePath}");
-
-                            File.Copy(destFile, versionFilePath, true);
-
-                            // Verify the file was actually created
-                            if (File.Exists(versionFilePath))
+                            if (ArchiveFile(destFilePath, relativePath, destInfo, versionPath, job.Name))
                             {
-                                var archivedInfo = new FileInfo(versionFilePath);
-                                Log($"[{job.Name}]   ✓ VERIFIED: Archived file exists ({archivedInfo.Length} bytes)");
                                 archivedCount++;
-                            }
-                            else
-                            {
-                                Log($"[{job.Name}]   ✗ ERROR: Archived file does NOT exist!");
                             }
                         }
                         else
@@ -618,9 +715,20 @@ namespace RobocopyManager
                             skippedSameOrNewer++;
                         }
                     }
+                    // Case 2: File exists ONLY in destination (will be DELETED by mirror mode)
+                    else if (settings.MirrorMode || settings.PurgeDestination)
+                    {
+                        Log($"[{job.Name}]   → File will be DELETED by mirror/purge - archiving for safety");
+                        var destInfo = new FileInfo(destFilePath);
+
+                        if (ArchiveFile(destFilePath, relativePath, destInfo, versionPath, job.Name))
+                        {
+                            archivedCount++;
+                        }
+                    }
                     else
                     {
-                        Log($"[{job.Name}]   → Skipped - new file (doesn't exist in destination yet)");
+                        Log($"[{job.Name}]   → Skipped - new file (doesn't exist in source, won't be deleted)");
                         skippedNewFiles++;
                     }
                 }
@@ -640,6 +748,49 @@ namespace RobocopyManager
             {
                 Log($"[{job.Name}] Archiving error: {ex.Message}");
                 Log($"[{job.Name}] Stack trace: {ex.StackTrace}");
+            }
+        }
+
+        private bool ArchiveFile(string sourceFilePath, string relativePath, FileInfo fileInfo, string versionPath, string jobName)
+        {
+            try
+            {
+                // Archive the file
+                var timestamp = fileInfo.LastWriteTime.ToString("yyyy-MM-dd_HH-mm-ss");
+                var fileName = Path.GetFileNameWithoutExtension(sourceFilePath);
+                var extension = Path.GetExtension(sourceFilePath);
+                var versionFileName = $"{fileName}_{timestamp}{extension}";
+
+                var relativeDir = Path.GetDirectoryName(relativePath);
+                var versionDir = string.IsNullOrEmpty(relativeDir)
+                    ? versionPath
+                    : Path.Combine(versionPath, relativeDir);
+
+                Log($"[{jobName}]   Creating version directory: {versionDir}");
+                Directory.CreateDirectory(versionDir);
+
+                var versionFilePath = Path.Combine(versionDir, versionFileName);
+                Log($"[{jobName}]   Copying to: {versionFilePath}");
+
+                File.Copy(sourceFilePath, versionFilePath, true);
+
+                // Verify the file was actually created
+                if (File.Exists(versionFilePath))
+                {
+                    var archivedInfo = new FileInfo(versionFilePath);
+                    Log($"[{jobName}]   ✓ VERIFIED: Archived file exists ({archivedInfo.Length} bytes)");
+                    return true;
+                }
+                else
+                {
+                    Log($"[{jobName}]   ✗ ERROR: Archived file does NOT exist!");
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"[{jobName}]   ✗ ERROR archiving file: {ex.Message}");
+                return false;
             }
         }
 
@@ -805,11 +956,39 @@ namespace RobocopyManager
 
         private void Log(string message)
         {
-            Dispatcher.Invoke(() =>
+            var timestampedMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
+
+            // Write to UI (only if dispatcher is available)
+            try
             {
-                txtLog.AppendText(message + Environment.NewLine);
-                txtLog.ScrollToEnd();
-            });
+                if (Dispatcher.CheckAccess())
+                {
+                    txtLog.AppendText(timestampedMessage + Environment.NewLine);
+                    txtLog.ScrollToEnd();
+                }
+                else
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        txtLog.AppendText(timestampedMessage + Environment.NewLine);
+                        txtLog.ScrollToEnd();
+                    });
+                }
+            }
+            catch
+            {
+                // Fail silently if UI is not ready
+            }
+
+            // Write to file
+            try
+            {
+                logFileWriter?.WriteLine(timestampedMessage);
+            }
+            catch
+            {
+                // Fail silently if we can't write to log file
+            }
         }
 
         private void BtnSettings_Click(object sender, RoutedEventArgs e)
@@ -836,6 +1015,13 @@ namespace RobocopyManager
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
             base.OnClosing(e);
+
+            // Stop the scheduler timer
+            if (schedulerTimer != null)
+            {
+                schedulerTimer.Dispose();
+                schedulerTimer = null;
+            }
 
             // Check if any jobs are running
             bool anyRunning = false;
@@ -886,6 +1072,15 @@ namespace RobocopyManager
             }
 
             SaveConfigAutomatically();
+
+            // Close log file
+            Log("=== Application closing ===");
+            try
+            {
+                logFileWriter?.Close();
+                logFileWriter?.Dispose();
+            }
+            catch { }
         }
     }
 

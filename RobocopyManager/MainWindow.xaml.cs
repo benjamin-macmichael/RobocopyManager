@@ -251,11 +251,8 @@ namespace RobocopyManager
             var txtName = new TextBox { Text = job.Name, Width = 200, Margin = new Thickness(0, 0, 10, 0) };
             txtName.TextChanged += (s, e) => { job.Name = txtName.Text; SaveConfigAutomatically(); };
 
-            var btnRunNow = new Button { Content = "Run Now", Width = 80, Background = System.Windows.Media.Brushes.DodgerBlue, Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(0, 0, 5, 0) };
-            var btnCancelJob = new Button { Content = "Cancel", Width = 80, Background = System.Windows.Media.Brushes.Orange, Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(0, 0, 10, 0), IsEnabled = false };
-
-            btnRunNow.Click += (s, e) => RunSingleJob(job, btnRunNow, btnCancelJob);
-            btnCancelJob.Click += (s, e) => CancelSingleJob(job, btnRunNow, btnCancelJob);
+            var btnRunNow = new Button { Content = "Run Now", Width = 80, Background = System.Windows.Media.Brushes.DodgerBlue, Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(0, 0, 10, 0) };
+            btnRunNow.Click += (s, e) => RunSingleJob(job, btnRunNow);
 
             var btnDelete = new Button { Content = "Delete", Width = 80, Background = System.Windows.Media.Brushes.IndianRed, Foreground = System.Windows.Media.Brushes.White };
             btnDelete.Click += (s, e) => DeleteJob(border, job);
@@ -263,7 +260,6 @@ namespace RobocopyManager
             headerPanel.Children.Add(chkEnabled);
             headerPanel.Children.Add(txtName);
             headerPanel.Children.Add(btnRunNow);
-            headerPanel.Children.Add(btnCancelJob);
             headerPanel.Children.Add(btnDelete);
             Grid.SetRow(headerPanel, 0);
 
@@ -298,6 +294,14 @@ namespace RobocopyManager
             excludePanel.Children.Add(txtExclude);
             Grid.SetRow(excludePanel, 3);
 
+            var archivePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
+            var chkArchive = new CheckBox { Content = "Enable archiving (save old versions before overwriting/deleting)", VerticalAlignment = VerticalAlignment.Center };
+            chkArchive.IsChecked = job.EnableArchiving;
+            chkArchive.Checked += (s, e) => { job.EnableArchiving = true; SaveConfigAutomatically(); };
+            chkArchive.Unchecked += (s, e) => { job.EnableArchiving = false; SaveConfigAutomatically(); };
+            archivePanel.Children.Add(chkArchive);
+            Grid.SetRow(archivePanel, 4);
+
             var threadPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
             threadPanel.Children.Add(new TextBlock { Text = "Thread Count: ", FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
             var sliderThreads = new Slider { Width = 300, Minimum = 1, Maximum = 128, Value = job.Threads, Margin = new Thickness(5, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
@@ -306,7 +310,7 @@ namespace RobocopyManager
             threadPanel.Children.Add(sliderThreads);
             threadPanel.Children.Add(lblThreads);
             threadPanel.Children.Add(new TextBlock { Text = " (Recommended: 8-32 for network)", FontStyle = FontStyles.Italic, Foreground = System.Windows.Media.Brushes.Gray, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) });
-            Grid.SetRow(threadPanel, 4);
+            Grid.SetRow(threadPanel, 5);
 
             var schedulePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
             var chkSchedule = new CheckBox { Content = "Run on schedule: ", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
@@ -339,7 +343,7 @@ namespace RobocopyManager
             schedulePanel.Children.Add(lblColon);
             schedulePanel.Children.Add(txtMinute);
             schedulePanel.Children.Add(lblExample);
-            Grid.SetRow(schedulePanel, 5);
+            Grid.SetRow(schedulePanel, 6);
 
             var cmdPanel = new StackPanel { Margin = new Thickness(0, 5, 0, 0) };
             var txtCommand = new TextBox { IsReadOnly = true, Background = System.Windows.Media.Brushes.Black, Foreground = System.Windows.Media.Brushes.LightGreen, FontFamily = new System.Windows.Media.FontFamily("Consolas"), Padding = new Thickness(5), TextWrapping = TextWrapping.Wrap };
@@ -349,12 +353,13 @@ namespace RobocopyManager
             txtExclude.TextChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             sliderThreads.ValueChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             cmdPanel.Children.Add(txtCommand);
-            Grid.SetRow(cmdPanel, 6);
+            Grid.SetRow(cmdPanel, 7);
 
             grid.Children.Add(headerPanel);
             grid.Children.Add(srcPanel);
             grid.Children.Add(dstPanel);
             grid.Children.Add(excludePanel);
+            grid.Children.Add(archivePanel);
             grid.Children.Add(threadPanel);
             grid.Children.Add(schedulePanel);
             grid.Children.Add(cmdPanel);
@@ -363,7 +368,7 @@ namespace RobocopyManager
             jobsPanel.Children.Insert(jobsPanel.Children.Count - 1, border);
         }
 
-        private async void RunSingleJob(RobocopyJob job, Button btnRunNow, Button btnCancelJob)
+        private async void RunSingleJob(RobocopyJob job, Button btnRunNow)
         {
             if (string.IsNullOrWhiteSpace(job.SourcePath) || string.IsNullOrWhiteSpace(job.DestinationPath))
             {
@@ -380,54 +385,24 @@ namespace RobocopyManager
 
             if (isRunning)
             {
-                MessageBox.Show($"Job '{job.Name}' is already running. Please wait for it to complete or cancel it first.", "Job Already Running", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show($"Job '{job.Name}' is already running. Please wait for it to complete or close its CMD window.", "Job Already Running", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             btnRunNow.IsEnabled = false;
             btnRunNow.Content = "Running...";
-            btnCancelJob.IsEnabled = true;
 
             Log("========================================");
             Log($"Starting single job: {job.Name} at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            Log("========================================\n");
+            Log("========================================");
 
             await Task.Run(() => ExecuteRobocopy(job));
 
-            Log($"\n[{job.Name}] Job completed at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            Log("========================================\n");
+            Log($"[{job.Name}] Job completed at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            Log("========================================");
 
             btnRunNow.IsEnabled = true;
             btnRunNow.Content = "Run Now";
-            btnCancelJob.IsEnabled = false;
-        }
-
-        private void CancelSingleJob(RobocopyJob job, Button btnRunNow, Button btnCancelJob)
-        {
-            lock (jobProcesses)
-            {
-                if (jobProcesses.ContainsKey(job.Id))
-                {
-                    try
-                    {
-                        var process = jobProcesses[job.Id];
-                        if (!process.HasExited)
-                        {
-                            process.Kill();
-                            Log($"[{job.Name}] Job cancelled by user.");
-                        }
-                        jobProcesses.Remove(job.Id);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log($"[{job.Name}] Error cancelling job: {ex.Message}");
-                    }
-                }
-            }
-
-            btnRunNow.IsEnabled = true;
-            btnRunNow.Content = "Run Now";
-            btnCancelJob.IsEnabled = false;
         }
 
         private void DeleteJob(Border border, RobocopyJob job)
@@ -486,13 +461,7 @@ namespace RobocopyManager
             excludedDirs.Add("$Recycle.Bin");
             excludedDirs.Add("Recycler");
 
-            // Exclude the version folder from robocopy operations
-            if (settings.EnableVersioning && !string.IsNullOrWhiteSpace(settings.VersionFolder))
-            {
-                excludedDirs.Add(settings.VersionFolder);
-            }
-
-            // Add user-specified excluded directories
+            // Add user-specified excluded directories (including OldVersions if they want)
             if (!string.IsNullOrWhiteSpace(job.ExcludedDirectories))
             {
                 var userExcluded = job.ExcludedDirectories.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
@@ -523,7 +492,6 @@ namespace RobocopyManager
 
             btnRunAll.IsEnabled = false;
             btnStopAll.IsEnabled = true;
-            txtLog.Clear();
             runningProcesses.Clear();
 
             Log("========================================");
@@ -545,26 +513,25 @@ namespace RobocopyManager
         {
             try
             {
-                // Archive old versions if versioning is enabled
-                if (settings.EnableVersioning)
+                // Archive old versions if archiving is enabled for this job AND global versioning is enabled
+                if (job.EnableArchiving && settings.EnableVersioning)
                 {
                     ArchiveOldVersions(job);
                 }
 
                 var command = GenerateRobocopyCommand(job);
-                Log($"[{job.Name}] Starting...");
-                Log($"[{job.Name}] Command: {command}\n");
+                Log($"[{job.Name}] Starting at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+                Log($"[{job.Name}] Command: {command}");
 
                 var process = new Process
                 {
                     StartInfo = new ProcessStartInfo
                     {
                         FileName = "cmd.exe",
-                        Arguments = $"/c {command}",
-                        UseShellExecute = false,
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        CreateNoWindow = true
+                        Arguments = $"/c title {job.Name} - Robocopy && {command}",
+                        UseShellExecute = true, // This allows the window to be visible
+                        CreateNoWindow = false, // Show the CMD window
+                        WindowStyle = ProcessWindowStyle.Normal
                     }
                 };
 
@@ -578,37 +545,37 @@ namespace RobocopyManager
                     jobProcesses[job.Id] = process;
                 }
 
-                process.OutputDataReceived += (s, e) => { if (!string.IsNullOrEmpty(e.Data)) Log($"[{job.Name}] {e.Data}"); };
-                process.ErrorDataReceived += (s, e) => { if (!string.IsNullOrEmpty(e.Data)) Log($"[{job.Name}] ERROR: {e.Data}"); };
-
                 process.Start();
-                process.BeginOutputReadLine();
-                process.BeginErrorReadLine();
-                process.WaitForExit();
 
-                lock (runningProcesses)
+                // Monitor the process in a background thread
+                Task.Run(() =>
                 {
-                    runningProcesses.Remove(process);
-                }
+                    process.WaitForExit();
 
-                lock (jobProcesses)
-                {
-                    jobProcesses.Remove(job.Id);
-                }
+                    lock (runningProcesses)
+                    {
+                        runningProcesses.Remove(process);
+                    }
 
-                // Disable Stop All button if no more jobs are running
-                bool anyRunning = false;
-                lock (runningProcesses)
-                {
-                    anyRunning = runningProcesses.Any();
-                }
+                    lock (jobProcesses)
+                    {
+                        jobProcesses.Remove(job.Id);
+                    }
 
-                if (!anyRunning)
-                {
-                    Dispatcher.Invoke(() => btnStopAll.IsEnabled = false);
-                }
+                    // Disable Stop All button if no more jobs are running
+                    bool anyRunning = false;
+                    lock (runningProcesses)
+                    {
+                        anyRunning = runningProcesses.Any();
+                    }
 
-                Log($"[{job.Name}] Completed with exit code: {process.ExitCode}\n");
+                    if (!anyRunning)
+                    {
+                        Dispatcher.Invoke(() => btnStopAll.IsEnabled = false);
+                    }
+
+                    Log($"[{job.Name}] Completed at {DateTime.Now:yyyy-MM-dd HH:mm:ss} with exit code: {process.ExitCode}");
+                });
             }
             catch (Exception ex)
             {
@@ -622,47 +589,28 @@ namespace RobocopyManager
             {
                 if (string.IsNullOrWhiteSpace(job.SourcePath) || string.IsNullOrWhiteSpace(job.DestinationPath))
                 {
-                    Log($"[{job.Name}] Archiving skipped - paths not configured");
                     return;
                 }
 
                 if (!Directory.Exists(job.SourcePath))
                 {
-                    Log($"[{job.Name}] Archiving skipped - source path does not exist: {job.SourcePath}");
+                    Log($"[{job.Name}] Archiving skipped - source path does not exist");
                     return;
                 }
 
                 if (!Directory.Exists(job.DestinationPath))
                 {
-                    Log($"[{job.Name}] Archiving skipped - destination path does not exist: {job.DestinationPath}");
+                    Log($"[{job.Name}] Archiving skipped - destination path does not exist");
                     return;
                 }
 
                 Log($"[{job.Name}] Checking for files to archive...");
-                Log($"[{job.Name}] Source: {job.SourcePath}");
-                Log($"[{job.Name}] Destination: {job.DestinationPath}");
 
                 var versionPath = Path.Combine(job.DestinationPath, settings.VersionFolder);
 
-                // CRITICAL: Create the directory FIRST to test if directory creation works
                 if (!Directory.Exists(versionPath))
                 {
-                    Log($"[{job.Name}] Creating archive directory: {versionPath}");
                     Directory.CreateDirectory(versionPath);
-
-                    if (Directory.Exists(versionPath))
-                    {
-                        Log($"[{job.Name}] ✓ Archive directory created successfully");
-                    }
-                    else
-                    {
-                        Log($"[{job.Name}] ✗ ERROR: Failed to create archive directory!");
-                        return;
-                    }
-                }
-                else
-                {
-                    Log($"[{job.Name}] Archive directory already exists: {versionPath}");
                 }
 
                 // Get all files in source and destination
@@ -673,21 +621,14 @@ namespace RobocopyManager
                     : new HashSet<string>();
 
                 var destFiles = Directory.GetFiles(job.DestinationPath, "*.*", SearchOption.AllDirectories)
-                    .Where(f => !f.StartsWith(versionPath, StringComparison.OrdinalIgnoreCase)); // Exclude OldVersions folder itself
-
-                Log($"[{job.Name}] Found {sourceFiles.Count} file(s) in source");
-                Log($"[{job.Name}] Found {destFiles.Count()} file(s) in destination");
+                    .Where(f => !f.StartsWith(versionPath, StringComparison.OrdinalIgnoreCase));
 
                 int archivedCount = 0;
-                int skippedSameOrNewer = 0;
-                int skippedNewFiles = 0;
 
                 foreach (var destFilePath in destFiles)
                 {
                     var relativePath = destFilePath.Substring(job.DestinationPath.Length).TrimStart('\\');
                     var sourceFilePath = Path.Combine(job.SourcePath, relativePath);
-
-                    Log($"[{job.Name}] Checking: {relativePath}");
 
                     // Case 1: File exists in BOTH source and destination
                     if (sourceFiles.Contains(relativePath))
@@ -695,30 +636,18 @@ namespace RobocopyManager
                         var sourceInfo = new FileInfo(sourceFilePath);
                         var destInfo = new FileInfo(destFilePath);
 
-                        Log($"[{job.Name}]   Source time: {sourceInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss.fff}");
-                        Log($"[{job.Name}]   Dest time:   {destInfo.LastWriteTime:yyyy-MM-dd HH:mm:ss.fff}");
-                        Log($"[{job.Name}]   Difference:  {(sourceInfo.LastWriteTime - destInfo.LastWriteTime).TotalSeconds:F2} seconds");
-
                         // Check if source is newer (will be overwritten by robocopy)
                         if ((sourceInfo.LastWriteTime - destInfo.LastWriteTime).TotalSeconds > 2)
                         {
-                            Log($"[{job.Name}]   → Source is NEWER - will archive destination");
-
                             if (ArchiveFile(destFilePath, relativePath, destInfo, versionPath, job.Name))
                             {
                                 archivedCount++;
                             }
                         }
-                        else
-                        {
-                            Log($"[{job.Name}]   → Skipped - destination is same age or newer");
-                            skippedSameOrNewer++;
-                        }
                     }
                     // Case 2: File exists ONLY in destination (will be DELETED by mirror mode)
                     else if (settings.MirrorMode || settings.PurgeDestination)
                     {
-                        Log($"[{job.Name}]   → File will be DELETED by mirror/purge - archiving for safety");
                         var destInfo = new FileInfo(destFilePath);
 
                         if (ArchiveFile(destFilePath, relativePath, destInfo, versionPath, job.Name))
@@ -726,28 +655,21 @@ namespace RobocopyManager
                             archivedCount++;
                         }
                     }
-                    else
-                    {
-                        Log($"[{job.Name}]   → Skipped - new file (doesn't exist in source, won't be deleted)");
-                        skippedNewFiles++;
-                    }
                 }
-
-                Log($"[{job.Name}] Summary:");
-                Log($"[{job.Name}]   - Archived: {archivedCount} file(s)");
-                Log($"[{job.Name}]   - Skipped (same/newer): {skippedSameOrNewer} file(s)");
-                Log($"[{job.Name}]   - Skipped (new files): {skippedNewFiles} file(s)");
-                Log($"[{job.Name}]   - Archive location: {versionPath}");
 
                 if (archivedCount > 0)
                 {
+                    Log($"[{job.Name}] Archived {archivedCount} file(s) to {settings.VersionFolder}");
                     CleanupOldVersions(versionPath, job.Name);
+                }
+                else
+                {
+                    Log($"[{job.Name}] No files needed archiving");
                 }
             }
             catch (Exception ex)
             {
                 Log($"[{job.Name}] Archiving error: {ex.Message}");
-                Log($"[{job.Name}] Stack trace: {ex.StackTrace}");
             }
         }
 
@@ -755,7 +677,6 @@ namespace RobocopyManager
         {
             try
             {
-                // Archive the file
                 var timestamp = fileInfo.LastWriteTime.ToString("yyyy-MM-dd_HH-mm-ss");
                 var fileName = Path.GetFileNameWithoutExtension(sourceFilePath);
                 var extension = Path.GetExtension(sourceFilePath);
@@ -766,30 +687,26 @@ namespace RobocopyManager
                     ? versionPath
                     : Path.Combine(versionPath, relativeDir);
 
-                Log($"[{jobName}]   Creating version directory: {versionDir}");
                 Directory.CreateDirectory(versionDir);
 
                 var versionFilePath = Path.Combine(versionDir, versionFileName);
-                Log($"[{jobName}]   Copying to: {versionFilePath}");
 
                 File.Copy(sourceFilePath, versionFilePath, true);
 
-                // Verify the file was actually created
                 if (File.Exists(versionFilePath))
                 {
-                    var archivedInfo = new FileInfo(versionFilePath);
-                    Log($"[{jobName}]   ✓ VERIFIED: Archived file exists ({archivedInfo.Length} bytes)");
+                    Log($"[{jobName}] Archived: {relativePath}");
                     return true;
                 }
                 else
                 {
-                    Log($"[{jobName}]   ✗ ERROR: Archived file does NOT exist!");
+                    Log($"[{jobName}] ERROR: Failed to archive {relativePath}");
                     return false;
                 }
             }
             catch (Exception ex)
             {
-                Log($"[{jobName}]   ✗ ERROR archiving file: {ex.Message}");
+                Log($"[{jobName}] ERROR archiving {relativePath}: {ex.Message}");
                 return false;
             }
         }
@@ -958,29 +875,7 @@ namespace RobocopyManager
         {
             var timestampedMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
 
-            // Write to UI (only if dispatcher is available)
-            try
-            {
-                if (Dispatcher.CheckAccess())
-                {
-                    txtLog.AppendText(timestampedMessage + Environment.NewLine);
-                    txtLog.ScrollToEnd();
-                }
-                else
-                {
-                    Dispatcher.Invoke(() =>
-                    {
-                        txtLog.AppendText(timestampedMessage + Environment.NewLine);
-                        txtLog.ScrollToEnd();
-                    });
-                }
-            }
-            catch
-            {
-                // Fail silently if UI is not ready
-            }
-
-            // Write to file
+            // Only write to file (no UI)
             try
             {
                 logFileWriter?.WriteLine(timestampedMessage);
@@ -999,12 +894,6 @@ namespace RobocopyManager
             {
                 SaveConfigAutomatically();
             }
-        }
-
-        private void BtnClearLog_Click(object sender, RoutedEventArgs e)
-        {
-            txtLog.Clear();
-            Log("Log cleared");
         }
 
         private void BtnAddJob_Click(object sender, RoutedEventArgs e)
@@ -1096,6 +985,7 @@ namespace RobocopyManager
         public TimeSpan ScheduledTime { get; set; } = new TimeSpan(18, 0, 0);
         public DateTime? LastRun { get; set; }
         public string ExcludedDirectories { get; set; } = ""; // Comma-separated list of folders to exclude
+        public bool EnableArchiving { get; set; } = true; // Whether to archive old versions before running
     }
 
     public class GlobalSettings

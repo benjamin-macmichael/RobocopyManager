@@ -613,14 +613,23 @@ namespace RobocopyManager
                     Directory.CreateDirectory(versionPath);
                 }
 
-                // Get all files in source and destination
+                // System folders to skip during archiving
+                var systemFolders = new[] {
+                    "$RECYCLE.BIN",
+                    "System Volume Information",
+                    "$Recycle.Bin",
+                    "Recycler",
+                    settings.VersionFolder
+                };
+
+                // Get all files in source and destination (excluding system folders)
                 var sourceFiles = Directory.Exists(job.SourcePath)
-                    ? Directory.GetFiles(job.SourcePath, "*.*", SearchOption.AllDirectories)
+                    ? GetFilesExcludingSystemFolders(job.SourcePath, systemFolders)
                         .Select(f => f.Substring(job.SourcePath.Length).TrimStart('\\'))
                         .ToHashSet()
                     : new HashSet<string>();
 
-                var destFiles = Directory.GetFiles(job.DestinationPath, "*.*", SearchOption.AllDirectories)
+                var destFiles = GetFilesExcludingSystemFolders(job.DestinationPath, systemFolders)
                     .Where(f => !f.StartsWith(versionPath, StringComparison.OrdinalIgnoreCase));
 
                 int archivedCount = 0;
@@ -671,6 +680,53 @@ namespace RobocopyManager
             {
                 Log($"[{job.Name}] Archiving error: {ex.Message}");
             }
+        }
+
+        private IEnumerable<string> GetFilesExcludingSystemFolders(string path, string[] systemFolders)
+        {
+            var files = new List<string>();
+
+            try
+            {
+                // Get files in current directory
+                try
+                {
+                    files.AddRange(Directory.GetFiles(path));
+                }
+                catch
+                {
+                    // Skip if can't access this directory
+                }
+
+                // Get subdirectories and recurse (excluding system folders)
+                try
+                {
+                    var directories = Directory.GetDirectories(path);
+                    foreach (var dir in directories)
+                    {
+                        var dirName = Path.GetFileName(dir);
+
+                        // Skip system folders
+                        if (systemFolders.Any(sf => sf.Equals(dirName, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            continue;
+                        }
+
+                        // Recursively get files from subdirectory
+                        files.AddRange(GetFilesExcludingSystemFolders(dir, systemFolders));
+                    }
+                }
+                catch
+                {
+                    // Skip if can't access subdirectories
+                }
+            }
+            catch
+            {
+                // Skip this entire path if we can't access it
+            }
+
+            return files;
         }
 
         private bool ArchiveFile(string sourceFilePath, string relativePath, FileInfo fileInfo, string versionPath, string jobName)

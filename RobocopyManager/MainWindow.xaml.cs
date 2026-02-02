@@ -75,7 +75,7 @@ namespace RobocopyManager
         {
             try
             {
-                var cutoffDate = DateTime.Now.AddDays(-30);
+                var cutoffDate = DateTime.Now.AddMonths(-12);
                 var logFiles = Directory.GetFiles(logDirectory, "RobocopyManager_*.log");
 
                 foreach (var logFile in logFiles)
@@ -108,10 +108,33 @@ namespace RobocopyManager
                 if (File.Exists(configFilePath))
                 {
                     var json = File.ReadAllText(configFilePath);
-                    var config = JsonSerializer.Deserialize<Config>(json);
+                    var options = new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true,
+                        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never
+                    };
 
-                    jobs = config.Jobs ?? new List<RobocopyJob>();
-                    settings = config.Settings ?? new GlobalSettings();
+                    var config = JsonSerializer.Deserialize<Config>(json, options);
+
+                    jobs = config?.Jobs ?? new List<RobocopyJob>();
+                    settings = config?.Settings ?? new GlobalSettings();
+
+                    // Validate and fix any jobs with missing properties
+                    foreach (var job in jobs)
+                    {
+                        if (job.Name == null) job.Name = "";
+                        if (job.SourcePath == null) job.SourcePath = "";
+                        if (job.DestinationPath == null) job.DestinationPath = "";
+                        if (job.ExcludedDirectories == null) job.ExcludedDirectories = "";
+                        if (job.Threads <= 0) job.Threads = 8;
+                    }
+
+                    // Validate settings
+                    if (settings.VersionFolder == null || string.IsNullOrWhiteSpace(settings.VersionFolder))
+                    {
+                        settings.VersionFolder = "OldVersions";
+                    }
+
                     jobIdCounter = jobs.Any() ? jobs.Max(j => j.Id) + 1 : 1;
 
                     foreach (var job in jobs)
@@ -128,7 +151,13 @@ namespace RobocopyManager
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error loading saved configuration: {ex.Message}\nStarting with empty configuration.", "Load Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                Log($"Error loading configuration: {ex.Message}");
+                MessageBox.Show($"Error loading saved configuration: {ex.Message}\n\nStarting with empty configuration.", "Load Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+
+                // Start fresh with defaults
+                jobs = new List<RobocopyJob>();
+                settings = new GlobalSettings();
+                jobIdCounter = 1;
             }
         }
 
@@ -202,9 +231,6 @@ namespace RobocopyManager
                         job.LastRun = now;
                         SaveConfigAutomatically();
 
-                        // Enable Stop All button when scheduled job starts (must use Dispatcher since we're on background thread)
-                        Dispatcher.Invoke(() => btnStopAll.IsEnabled = true);
-
                         Task.Run(() => ExecuteRobocopy(job));
                     }
                 }
@@ -224,83 +250,192 @@ namespace RobocopyManager
         {
             var border = new Border
             {
-                Margin = new Thickness(5),
-                Padding = new Thickness(10),
-                Background = System.Windows.Media.Brushes.White,
-                BorderBrush = System.Windows.Media.Brushes.LightGray,
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(5),
+                Margin = new Thickness(0, 0, 0, 12),
+                Padding = new Thickness(20),
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(37, 37, 38)),
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70)),
+                BorderThickness = new Thickness(1, 1, 1, 1),
+                CornerRadius = new CornerRadius(8),
                 Tag = job
             };
 
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            var mainGrid = new Grid();
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Header row
+            mainGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // Details row
 
-            var headerPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
-            var chkEnabled = new CheckBox { IsChecked = job.Enabled, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
+            // Header section (always visible)
+            var headerPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 5) };
+
+            var chkEnabled = new CheckBox
+            {
+                IsChecked = job.Enabled,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 10, 0),
+                Foreground = System.Windows.Media.Brushes.White
+            };
             chkEnabled.Checked += (s, e) => { job.Enabled = true; SaveConfigAutomatically(); };
             chkEnabled.Unchecked += (s, e) => { job.Enabled = false; SaveConfigAutomatically(); };
 
-            var txtName = new TextBox { Text = job.Name, Width = 200, Margin = new Thickness(0, 0, 10, 0) };
+            var txtName = new TextBox
+            {
+                Text = job.Name,
+                Width = 200,
+                Margin = new Thickness(0, 0, 10, 0),
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30)),
+                Foreground = System.Windows.Media.Brushes.White,
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70)),
+                BorderThickness = new Thickness(1, 1, 1, 1),
+                Padding = new Thickness(8, 6, 8, 6),
+                FontSize = 13
+            };
             txtName.TextChanged += (s, e) => { job.Name = txtName.Text; SaveConfigAutomatically(); };
 
-            var btnRunNow = new Button { Content = "Run Now", Width = 80, Background = System.Windows.Media.Brushes.DodgerBlue, Foreground = System.Windows.Media.Brushes.White, Margin = new Thickness(0, 0, 10, 0) };
+            var btnRunNow = new Button
+            {
+                Content = "▶ Run",
+                Width = 80,
+                Height = 32,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0, 120, 212)),
+                Foreground = System.Windows.Media.Brushes.White,
+                Margin = new Thickness(0, 0, 10, 0),
+                BorderThickness = new Thickness(0, 0, 0, 0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                FontSize = 13
+            };
             btnRunNow.Click += (s, e) => RunSingleJob(job, btnRunNow);
 
-            var btnDelete = new Button { Content = "Delete", Width = 80, Background = System.Windows.Media.Brushes.IndianRed, Foreground = System.Windows.Media.Brushes.White };
+            var btnDelete = new Button
+            {
+                Content = "🗑 Delete",
+                Width = 90,
+                Height = 32,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(232, 17, 35)),
+                Foreground = System.Windows.Media.Brushes.White,
+                Margin = new Thickness(0, 0, 10, 0),
+                BorderThickness = new Thickness(0, 0, 0, 0),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                FontSize = 13
+            };
             btnDelete.Click += (s, e) => DeleteJob(border, job);
+
+            var btnToggle = new Button
+            {
+                Content = job.IsCollapsed ? "▶" : "▼",
+                Width = 32,
+                Height = 32,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(45, 45, 48)),
+                Foreground = System.Windows.Media.Brushes.White,
+                BorderThickness = new Thickness(0, 0, 0, 0),
+                FontSize = 14,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Cursor = System.Windows.Input.Cursors.Hand
+            };
 
             headerPanel.Children.Add(chkEnabled);
             headerPanel.Children.Add(txtName);
             headerPanel.Children.Add(btnRunNow);
             headerPanel.Children.Add(btnDelete);
-            Grid.SetRow(headerPanel, 0);
 
-            var srcPanel = new StackPanel { Margin = new Thickness(0, 5, 0, 5) };
-            srcPanel.Children.Add(new TextBlock { Text = "Source Path:", FontWeight = FontWeights.Bold });
+            // Create a grid for header to position toggle button on right
+            var headerGrid = new Grid();
+            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            headerGrid.Children.Add(headerPanel);
+            Grid.SetColumn(headerPanel, 0);
+            headerGrid.Children.Add(btnToggle);
+            Grid.SetColumn(btnToggle, 1);
+            Grid.SetRow(headerGrid, 0);
+
+            // Details section (collapsible)
+            var detailsGrid = new Grid();
+            detailsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            detailsGrid.Visibility = job.IsCollapsed ? Visibility.Collapsed : Visibility.Visible; // Restore saved state
+            Grid.SetRow(detailsGrid, 1);
+
+            var srcPanel = new StackPanel { Margin = new Thickness(0, 10, 0, 10) };
+            srcPanel.Children.Add(new TextBlock { Text = "Source Path:", FontWeight = FontWeights.SemiBold, Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)), FontSize = 13 });
             var srcStack = new StackPanel { Orientation = Orientation.Horizontal };
-            var txtSource = new TextBox { Width = 700, Margin = new Thickness(0, 2, 5, 0), Text = job.SourcePath };
+            var txtSource = new TextBox
+            {
+                Width = 700,
+                Margin = new Thickness(0, 6, 8, 0),
+                Text = job.SourcePath,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30)),
+                Foreground = System.Windows.Media.Brushes.White,
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70)),
+                BorderThickness = new Thickness(1, 1, 1, 1),
+                Padding = new Thickness(8, 6, 8, 6),
+                FontSize = 13
+            };
             txtSource.TextChanged += (s, e) => { job.SourcePath = txtSource.Text; SaveConfigAutomatically(); };
-            var btnBrowseSrc = new Button { Content = "Browse...", Width = 80 };
+            var btnBrowseSrc = new Button { Content = "Browse", Width = 80, Height = 32 };
             btnBrowseSrc.Click += (s, e) => BrowseFolder(txtSource);
             srcStack.Children.Add(txtSource);
             srcStack.Children.Add(btnBrowseSrc);
             srcPanel.Children.Add(srcStack);
-            Grid.SetRow(srcPanel, 1);
+            Grid.SetRow(srcPanel, 0);
 
-            var dstPanel = new StackPanel { Margin = new Thickness(0, 5, 0, 5) };
-            dstPanel.Children.Add(new TextBlock { Text = "Destination Path:", FontWeight = FontWeights.Bold });
+            var dstPanel = new StackPanel { Margin = new Thickness(0, 10, 0, 10) };
+            dstPanel.Children.Add(new TextBlock { Text = "Destination Path:", FontWeight = FontWeights.SemiBold, Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)), FontSize = 13 });
             var dstStack = new StackPanel { Orientation = Orientation.Horizontal };
-            var txtDest = new TextBox { Width = 700, Margin = new Thickness(0, 2, 5, 0), Text = job.DestinationPath };
+            var txtDest = new TextBox
+            {
+                Width = 700,
+                Margin = new Thickness(0, 6, 8, 0),
+                Text = job.DestinationPath,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30)),
+                Foreground = System.Windows.Media.Brushes.White,
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70)),
+                BorderThickness = new Thickness(1, 1, 1, 1),
+                Padding = new Thickness(8, 6, 8, 6),
+                FontSize = 13
+            };
             txtDest.TextChanged += (s, e) => { job.DestinationPath = txtDest.Text; SaveConfigAutomatically(); };
-            var btnBrowseDst = new Button { Content = "Browse...", Width = 80 };
+            var btnBrowseDst = new Button { Content = "Browse", Width = 80, Height = 32 };
             btnBrowseDst.Click += (s, e) => BrowseFolder(txtDest);
             dstStack.Children.Add(txtDest);
             dstStack.Children.Add(btnBrowseDst);
             dstPanel.Children.Add(dstStack);
-            Grid.SetRow(dstPanel, 2);
+            Grid.SetRow(dstPanel, 1);
 
-            var excludePanel = new StackPanel { Margin = new Thickness(0, 5, 0, 5) };
-            excludePanel.Children.Add(new TextBlock { Text = "Exclude Directories (comma-separated, e.g., temp, .git, node_modules):", FontWeight = FontWeights.Bold });
-            var txtExclude = new TextBox { Width = 788, Margin = new Thickness(0, 2, 0, 0), Text = job.ExcludedDirectories };
+            var excludePanel = new StackPanel { Margin = new Thickness(0, 10, 0, 10) };
+            excludePanel.Children.Add(new TextBlock { Text = "Exclude Directories (comma-separated):", FontWeight = FontWeights.SemiBold, Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)), FontSize = 13 });
+            var txtExclude = new TextBox
+            {
+                Width = 788,
+                Margin = new Thickness(0, 6, 0, 0),
+                Text = job.ExcludedDirectories,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30)),
+                Foreground = System.Windows.Media.Brushes.White,
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70)),
+                BorderThickness = new Thickness(1, 1, 1, 1),
+                Padding = new Thickness(8, 6, 8, 6),
+                FontSize = 13
+            };
             txtExclude.TextChanged += (s, e) => { job.ExcludedDirectories = txtExclude.Text; SaveConfigAutomatically(); };
             excludePanel.Children.Add(txtExclude);
-            Grid.SetRow(excludePanel, 3);
+            Grid.SetRow(excludePanel, 2);
 
-            var archivePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
-            var chkArchive = new CheckBox { Content = "Enable archiving (save old versions before overwriting/deleting)", VerticalAlignment = VerticalAlignment.Center };
+            var archivePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 10) };
+            var chkArchive = new CheckBox
+            {
+                Content = "Enable archiving (save old versions)",
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)),
+                FontSize = 13
+            };
             chkArchive.IsChecked = job.EnableArchiving;
             chkArchive.Checked += (s, e) => { job.EnableArchiving = true; SaveConfigAutomatically(); };
             chkArchive.Unchecked += (s, e) => { job.EnableArchiving = false; SaveConfigAutomatically(); };
             archivePanel.Children.Add(chkArchive);
-            Grid.SetRow(archivePanel, 4);
+            Grid.SetRow(archivePanel, 3);
 
             var threadPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
             threadPanel.Children.Add(new TextBlock { Text = "Thread Count: ", FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
@@ -310,7 +445,7 @@ namespace RobocopyManager
             threadPanel.Children.Add(sliderThreads);
             threadPanel.Children.Add(lblThreads);
             threadPanel.Children.Add(new TextBlock { Text = " (Recommended: 8-32 for network)", FontStyle = FontStyles.Italic, Foreground = System.Windows.Media.Brushes.Gray, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) });
-            Grid.SetRow(threadPanel, 5);
+            Grid.SetRow(threadPanel, 4);
 
             var schedulePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
             var chkSchedule = new CheckBox { Content = "Run on schedule: ", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
@@ -343,7 +478,7 @@ namespace RobocopyManager
             schedulePanel.Children.Add(lblColon);
             schedulePanel.Children.Add(txtMinute);
             schedulePanel.Children.Add(lblExample);
-            Grid.SetRow(schedulePanel, 6);
+            Grid.SetRow(schedulePanel, 5);
 
             var cmdPanel = new StackPanel { Margin = new Thickness(0, 5, 0, 0) };
             var txtCommand = new TextBox { IsReadOnly = true, Background = System.Windows.Media.Brushes.Black, Foreground = System.Windows.Media.Brushes.LightGreen, FontFamily = new System.Windows.Media.FontFamily("Consolas"), Padding = new Thickness(5), TextWrapping = TextWrapping.Wrap };
@@ -353,18 +488,41 @@ namespace RobocopyManager
             txtExclude.TextChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             sliderThreads.ValueChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             cmdPanel.Children.Add(txtCommand);
-            Grid.SetRow(cmdPanel, 7);
+            Grid.SetRow(cmdPanel, 6);
 
-            grid.Children.Add(headerPanel);
-            grid.Children.Add(srcPanel);
-            grid.Children.Add(dstPanel);
-            grid.Children.Add(excludePanel);
-            grid.Children.Add(archivePanel);
-            grid.Children.Add(threadPanel);
-            grid.Children.Add(schedulePanel);
-            grid.Children.Add(cmdPanel);
+            detailsGrid.Children.Add(srcPanel);
+            detailsGrid.Children.Add(dstPanel);
+            detailsGrid.Children.Add(excludePanel);
+            detailsGrid.Children.Add(archivePanel);
+            detailsGrid.Children.Add(threadPanel);
+            detailsGrid.Children.Add(schedulePanel);
+            detailsGrid.Children.Add(cmdPanel);
 
-            border.Child = grid;
+            // Toggle button click handler
+            btnToggle.Click += (s, e) =>
+            {
+                if (detailsGrid.Visibility == Visibility.Visible)
+                {
+                    detailsGrid.Visibility = Visibility.Collapsed;
+                    btnToggle.Content = "▶";
+                    job.IsCollapsed = true;
+                }
+                else
+                {
+                    detailsGrid.Visibility = Visibility.Visible;
+                    btnToggle.Content = "▼";
+                    job.IsCollapsed = false;
+                }
+                SaveConfigAutomatically();
+            };
+
+            // Set initial toggle button state based on saved collapse state
+            btnToggle.Content = job.IsCollapsed ? "▶" : "▼";
+
+            mainGrid.Children.Add(headerGrid);
+            mainGrid.Children.Add(detailsGrid);
+
+            border.Child = mainGrid;
             jobsPanel.Children.Insert(jobsPanel.Children.Count - 1, border);
         }
 
@@ -398,7 +556,7 @@ namespace RobocopyManager
 
             await Task.Run(() => ExecuteRobocopy(job));
 
-            Log($"[{job.Name}] Job completed at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+            Log($"[{job.Name}] Robocopy cmd launched successfully at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             Log("========================================");
 
             btnRunNow.IsEnabled = true;
@@ -480,34 +638,6 @@ namespace RobocopyManager
             return cmd;
         }
 
-        private async void BtnRunAll_Click(object sender, RoutedEventArgs e)
-        {
-            var enabledJobs = jobs.Where(j => j.Enabled && !string.IsNullOrWhiteSpace(j.SourcePath) && !string.IsNullOrWhiteSpace(j.DestinationPath)).ToList();
-
-            if (!enabledJobs.Any())
-            {
-                MessageBox.Show("No valid jobs to run. Please configure source and destination paths.", "No Jobs", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            btnRunAll.IsEnabled = false;
-            btnStopAll.IsEnabled = true;
-            runningProcesses.Clear();
-
-            Log("========================================");
-            Log($"Starting {enabledJobs.Count} job(s) at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            Log("========================================\n");
-
-            var tasks = enabledJobs.Select(job => Task.Run(() => ExecuteRobocopy(job))).ToArray();
-            await Task.WhenAll(tasks);
-
-            Log("\n========================================");
-            Log($"All jobs completed at {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-            Log("========================================");
-
-            btnRunAll.IsEnabled = true;
-            btnStopAll.IsEnabled = false;
-        }
 
         private void ExecuteRobocopy(RobocopyJob job)
         {
@@ -569,10 +699,6 @@ namespace RobocopyManager
                         anyRunning = runningProcesses.Any();
                     }
 
-                    if (!anyRunning)
-                    {
-                        Dispatcher.Invoke(() => btnStopAll.IsEnabled = false);
-                    }
 
                     Log($"[{job.Name}] Completed at {DateTime.Now:yyyy-MM-dd HH:mm:ss} with exit code: {process.ExitCode}");
                 });
@@ -905,33 +1031,11 @@ namespace RobocopyManager
             }
         }
 
-        private void BtnStopAll_Click(object sender, RoutedEventArgs e)
-        {
-            lock (runningProcesses)
-            {
-                foreach (var proc in runningProcesses)
-                {
-                    try
-                    {
-                        if (!proc.HasExited)
-                        {
-                            proc.Kill();
-                            Log("Process terminated by user.");
-                        }
-                    }
-                    catch { }
-                }
-                runningProcesses.Clear();
-            }
-            btnRunAll.IsEnabled = true;
-            btnStopAll.IsEnabled = false;
-        }
-
         private void Log(string message)
         {
             var timestampedMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
 
-            // Only write to file (no UI)
+            // Write to file (no UI, no date checking - that happens in scheduler)
             try
             {
                 logFileWriter?.WriteLine(timestampedMessage);
@@ -1042,6 +1146,7 @@ namespace RobocopyManager
         public DateTime? LastRun { get; set; }
         public string ExcludedDirectories { get; set; } = ""; // Comma-separated list of folders to exclude
         public bool EnableArchiving { get; set; } = true; // Whether to archive old versions before running
+        public bool IsCollapsed { get; set; } = false; // Whether the job UI is collapsed
     }
 
     public class GlobalSettings

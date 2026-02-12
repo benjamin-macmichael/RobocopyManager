@@ -30,6 +30,7 @@ namespace RobocopyManager
             "RobocopyManager",
             "config.json"
         );
+        private Dictionary<int, TextBlock> jobStatusLabels = new Dictionary<int, TextBlock>();
 
         public MainWindow()
         {
@@ -480,6 +481,34 @@ namespace RobocopyManager
             schedulePanel.Children.Add(lblExample);
             Grid.SetRow(schedulePanel, 5);
 
+            var statusPanel = new StackPanel { Margin = new Thickness(0, 10, 0, 5) };
+            var lblStatusHeader = new TextBlock
+            {
+                Text = "Last Run Status:",
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)),
+                FontSize = 13,
+                Margin = new Thickness(0, 0, 0, 5)
+            };
+            statusPanel.Children.Add(lblStatusHeader);
+
+            var lblStatus = new TextBlock
+            {
+                FontSize = 12,
+                Padding = new Thickness(10, 8, 10, 8),
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(45, 45, 48)),
+                TextWrapping = TextWrapping.Wrap
+            };
+
+            // Store reference to status label for updates
+            jobStatusLabels[job.Id] = lblStatus;
+
+            // Set initial status text
+            UpdateStatusLabel(job, lblStatus);
+
+            statusPanel.Children.Add(lblStatus);
+            Grid.SetRow(statusPanel, 6);
+
             var cmdPanel = new StackPanel { Margin = new Thickness(0, 5, 0, 0) };
             var txtCommand = new TextBox { IsReadOnly = true, Background = System.Windows.Media.Brushes.Black, Foreground = System.Windows.Media.Brushes.LightGreen, FontFamily = new System.Windows.Media.FontFamily("Consolas"), Padding = new Thickness(5), TextWrapping = TextWrapping.Wrap };
             txtCommand.Text = GenerateRobocopyCommand(job);
@@ -488,7 +517,7 @@ namespace RobocopyManager
             txtExclude.TextChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             sliderThreads.ValueChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             cmdPanel.Children.Add(txtCommand);
-            Grid.SetRow(cmdPanel, 6);
+            Grid.SetRow(cmdPanel, 7);
 
             detailsGrid.Children.Add(srcPanel);
             detailsGrid.Children.Add(dstPanel);
@@ -496,6 +525,7 @@ namespace RobocopyManager
             detailsGrid.Children.Add(archivePanel);
             detailsGrid.Children.Add(threadPanel);
             detailsGrid.Children.Add(schedulePanel);
+            detailsGrid.Children.Add(statusPanel);
             detailsGrid.Children.Add(cmdPanel);
 
             // Toggle button click handler
@@ -643,6 +673,23 @@ namespace RobocopyManager
         {
             try
             {
+                // Set status to "Running" and update UI
+                job.LastStartTime = DateTime.Now;
+                job.LastStatus = "Running";
+                job.LastFinishTime = null;
+                job.LastExitCode = null;
+
+                // Update UI on main thread
+                Dispatcher.Invoke(() =>
+                {
+                    if (jobStatusLabels.TryGetValue(job.Id, out TextBlock statusLabel))
+                    {
+                        UpdateStatusLabel(job, statusLabel);
+                    }
+                });
+
+                SaveConfigAutomatically();
+
                 // Archive old versions if archiving is enabled for this job AND global versioning is enabled
                 if (job.EnableArchiving && settings.EnableVersioning)
                 {
@@ -659,8 +706,8 @@ namespace RobocopyManager
                     {
                         FileName = "cmd.exe",
                         Arguments = $"/c title {job.Name} - Robocopy && {command}",
-                        UseShellExecute = true, // This allows the window to be visible
-                        CreateNoWindow = false, // Show the CMD window
+                        UseShellExecute = true,
+                        CreateNoWindow = false,
                         WindowStyle = ProcessWindowStyle.Normal
                     }
                 };
@@ -692,20 +739,51 @@ namespace RobocopyManager
                         jobProcesses.Remove(job.Id);
                     }
 
-                    // Disable Stop All button if no more jobs are running
-                    bool anyRunning = false;
-                    lock (runningProcesses)
+                    // Update job status based on exit code
+                    job.LastFinishTime = DateTime.Now;
+                    job.LastExitCode = process.ExitCode;
+
+                    // Robocopy exit codes: 0-7 are success/warnings, 8+ are errors
+                    if (process.ExitCode < 8)
                     {
-                        anyRunning = runningProcesses.Any();
+                        job.LastStatus = "Success";
+                    }
+                    else
+                    {
+                        job.LastStatus = "Failed";
                     }
 
-
                     Log($"[{job.Name}] Completed at {DateTime.Now:yyyy-MM-dd HH:mm:ss} with exit code: {process.ExitCode}");
+
+                    // Update UI on main thread
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (jobStatusLabels.TryGetValue(job.Id, out TextBlock statusLabel))
+                        {
+                            UpdateStatusLabel(job, statusLabel);
+                        }
+                    });
+
+                    SaveConfigAutomatically();
                 });
             }
             catch (Exception ex)
             {
                 Log($"[{job.Name}] ERROR: {ex.Message}");
+
+                job.LastFinishTime = DateTime.Now;
+                job.LastStatus = "Failed";
+                job.LastExitCode = -1;
+
+                Dispatcher.Invoke(() =>
+                {
+                    if (jobStatusLabels.TryGetValue(job.Id, out TextBlock statusLabel))
+                    {
+                        UpdateStatusLabel(job, statusLabel);
+                    }
+                });
+
+                SaveConfigAutomatically();
             }
         }
 
@@ -741,19 +819,25 @@ namespace RobocopyManager
 
                 // System folders to skip during archiving
                 var systemFolders = new[] {
-                    "$RECYCLE.BIN",
-                    "System Volume Information",
-                    "$Recycle.Bin",
-                    "Recycler",
-                    settings.VersionFolder
-                };
+            "$RECYCLE.BIN",
+            "System Volume Information",
+            "$Recycle.Bin",
+            "Recycler",
+            settings.VersionFolder
+        };
 
                 // Get all files in source and destination (excluding system folders)
-                var sourceFiles = Directory.Exists(job.SourcePath)
-                    ? GetFilesExcludingSystemFolders(job.SourcePath, systemFolders)
-                        .Select(f => f.Substring(job.SourcePath.Length).TrimStart('\\'))
-                        .ToHashSet()
-                    : new HashSet<string>();
+                var sourceFilesDict = new Dictionary<string, FileInfo>(StringComparer.OrdinalIgnoreCase);
+
+                if (Directory.Exists(job.SourcePath))
+                {
+                    var sourceFilesList = GetFilesExcludingSystemFolders(job.SourcePath, systemFolders);
+                    foreach (var sourceFile in sourceFilesList)
+                    {
+                        var relativePath = sourceFile.Substring(job.SourcePath.Length).TrimStart('\\');
+                        sourceFilesDict[relativePath] = new FileInfo(sourceFile);
+                    }
+                }
 
                 var destFiles = GetFilesExcludingSystemFolders(job.DestinationPath, systemFolders)
                     .Where(f => !f.StartsWith(versionPath, StringComparison.OrdinalIgnoreCase));
@@ -763,27 +847,39 @@ namespace RobocopyManager
                 foreach (var destFilePath in destFiles)
                 {
                     var relativePath = destFilePath.Substring(job.DestinationPath.Length).TrimStart('\\');
-                    var sourceFilePath = Path.Combine(job.SourcePath, relativePath);
+                    var destInfo = new FileInfo(destFilePath);
+
+                    // Skip system/hidden files that shouldn't be archived
+                    var fileName = destInfo.Name;
+                    if (fileName.Equals(".DS_Store", StringComparison.OrdinalIgnoreCase) ||
+                        fileName.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase) ||
+                        fileName.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
 
                     // Case 1: File exists in BOTH source and destination
-                    if (sourceFiles.Contains(relativePath))
+                    if (sourceFilesDict.TryGetValue(relativePath, out FileInfo sourceInfo))
                     {
-                        var sourceInfo = new FileInfo(sourceFilePath);
-                        var destInfo = new FileInfo(destFilePath);
+                        // Use robocopy's logic: file differs if size is different OR timestamp differs by more than 2 seconds
+                        bool sizeDiffers = sourceInfo.Length != destInfo.Length;
+                        bool timestampDiffers = Math.Abs((sourceInfo.LastWriteTime - destInfo.LastWriteTime).TotalSeconds) > 2;
 
-                        // Check if source is newer (will be overwritten by robocopy)
-                        if ((sourceInfo.LastWriteTime - destInfo.LastWriteTime).TotalSeconds > 2)
+                        // Only archive if the file will actually be overwritten (different size or timestamp)
+                        if (sizeDiffers || timestampDiffers)
                         {
+                            Log($"[{job.Name}] File will be overwritten: {relativePath} (Size: {sourceInfo.Length} vs {destInfo.Length}, Time diff: {Math.Abs((sourceInfo.LastWriteTime - destInfo.LastWriteTime).TotalSeconds):F1}s)");
+
                             if (ArchiveFile(destFilePath, relativePath, destInfo, versionPath, job.Name))
                             {
                                 archivedCount++;
                             }
                         }
                     }
-                    // Case 2: File exists ONLY in destination (will be DELETED by mirror mode)
+                    // Case 2: File exists ONLY in destination (will be DELETED by mirror mode or purge)
                     else if (settings.MirrorMode || settings.PurgeDestination)
                     {
-                        var destInfo = new FileInfo(destFilePath);
+                        Log($"[{job.Name}] File will be deleted: {relativePath}");
 
                         if (ArchiveFile(destFilePath, relativePath, destInfo, versionPath, job.Name))
                         {
@@ -796,10 +892,17 @@ namespace RobocopyManager
                 {
                     Log($"[{job.Name}] Archived {archivedCount} file(s) to {settings.VersionFolder}");
                     CleanupOldVersions(versionPath, job.Name);
+
+                    // Clean up empty directories after archiving
+                    DeleteEmptyDirectories(versionPath);
+                    Log($"[{job.Name}] Cleaned up empty directories in archive");
                 }
                 else
                 {
                     Log($"[{job.Name}] No files needed archiving");
+
+                    // Still clean up empty directories even if nothing was archived this time
+                    DeleteEmptyDirectories(versionPath);
                 }
             }
             catch (Exception ex)
@@ -1060,6 +1163,36 @@ namespace RobocopyManager
         {
             AddNewJob();
         }
+        private void UpdateStatusLabel(RobocopyJob job, TextBlock lblStatus)
+        {
+            if (job.LastStatus == "Running")
+            {
+                lblStatus.Text = $"🔄 Running... (Started: {job.LastStartTime:yyyy-MM-dd HH:mm:ss})";
+                lblStatus.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(100, 181, 246)); // Blue
+            }
+            else if (job.LastStatus == "Success")
+            {
+                var duration = job.LastFinishTime.HasValue && job.LastStartTime.HasValue
+                    ? (job.LastFinishTime.Value - job.LastStartTime.Value).TotalMinutes
+                    : 0;
+                lblStatus.Text = $"✓ Success (Start: {job.LastStartTime:HH:mm:ss} | Finish: {job.LastFinishTime:HH:mm:ss} | Duration: {duration:F1} min | Exit Code: {job.LastExitCode})";
+                lblStatus.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(129, 199, 132)); // Green
+            }
+            else if (job.LastStatus == "Failed")
+            {
+                var duration = job.LastFinishTime.HasValue && job.LastStartTime.HasValue
+                    ? (job.LastFinishTime.Value - job.LastStartTime.Value).TotalMinutes
+                    : 0;
+                lblStatus.Text = $"✗ Failed (Start: {job.LastStartTime:HH:mm:ss} | Finish: {job.LastFinishTime:HH:mm:ss} | Duration: {duration:F1} min | Exit Code: {job.LastExitCode})";
+                lblStatus.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(239, 83, 80)); // Red
+            }
+            else
+            {
+                lblStatus.Text = "No previous runs";
+                lblStatus.Foreground = System.Windows.Media.Brushes.Gray;
+            }
+        }
+
 
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
@@ -1147,6 +1280,12 @@ namespace RobocopyManager
         public string ExcludedDirectories { get; set; } = ""; // Comma-separated list of folders to exclude
         public bool EnableArchiving { get; set; } = true; // Whether to archive old versions before running
         public bool IsCollapsed { get; set; } = false; // Whether the job UI is collapsed
+
+        // Status tracking for UI display
+        public DateTime? LastStartTime { get; set; }
+        public DateTime? LastFinishTime { get; set; }
+        public string LastStatus { get; set; } = ""; // "Success", "Failed", "Running", or ""
+        public int? LastExitCode { get; set; }
     }
 
     public class GlobalSettings

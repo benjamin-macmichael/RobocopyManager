@@ -31,6 +31,7 @@ namespace RobocopyManager
             "config.json"
         );
         private Dictionary<int, TextBlock> jobStatusLabels = new Dictionary<int, TextBlock>();
+        private Dictionary<int, System.Windows.Shapes.Ellipse> jobStatusIndicators = new Dictionary<int, System.Windows.Shapes.Ellipse>();
 
         public MainWindow()
         {
@@ -267,6 +268,24 @@ namespace RobocopyManager
             // Header section (always visible)
             var headerPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 5) };
 
+            // Add status indicator dot
+            var statusDot = new System.Windows.Shapes.Ellipse
+            {
+                Width = 12,
+                Height = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0),
+                Fill = System.Windows.Media.Brushes.Gray, // Default gray for no runs
+                Stroke = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70)),
+                StrokeThickness = 1
+            };
+
+            // Store reference for updates
+            jobStatusIndicators[job.Id] = statusDot;
+
+            // Set initial dot color based on last status
+            UpdateStatusIndicator(job, statusDot);
+
             var chkEnabled = new CheckBox
             {
                 IsChecked = job.Enabled,
@@ -290,6 +309,30 @@ namespace RobocopyManager
                 FontSize = 13
             };
             txtName.TextChanged += (s, e) => { job.Name = txtName.Text; SaveConfigAutomatically(); };
+
+            // Add last successful run date label
+            var lblLastRun = new TextBlock
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 10, 0),
+                Foreground = System.Windows.Media.Brushes.Gray,
+                FontSize = 11,
+                FontStyle = FontStyles.Italic
+            };
+
+            // Set initial last run text
+            if (job.LastStatus == "Success" && job.LastFinishTime.HasValue)
+            {
+                lblLastRun.Text = $"Last success: {job.LastFinishTime.Value:MMM d, yyyy h:mm tt}";
+            }
+            else if (job.LastFinishTime.HasValue)
+            {
+                lblLastRun.Text = $"Last run: {job.LastFinishTime.Value:MMM d, yyyy h:mm tt}";
+            }
+            else
+            {
+                lblLastRun.Text = "Never run";
+            }
 
             var btnRunNow = new Button
             {
@@ -332,8 +375,10 @@ namespace RobocopyManager
                 Cursor = System.Windows.Input.Cursors.Hand
             };
 
+            headerPanel.Children.Add(statusDot);
             headerPanel.Children.Add(chkEnabled);
             headerPanel.Children.Add(txtName);
+            headerPanel.Children.Add(lblLastRun);
             headerPanel.Children.Add(btnRunNow);
             headerPanel.Children.Add(btnDelete);
 
@@ -686,6 +731,11 @@ namespace RobocopyManager
                     {
                         UpdateStatusLabel(job, statusLabel);
                     }
+
+                    if (jobStatusIndicators.TryGetValue(job.Id, out System.Windows.Shapes.Ellipse statusDot))
+                    {
+                        UpdateStatusIndicator(job, statusDot);
+                    }
                 });
 
                 SaveConfigAutomatically();
@@ -762,6 +812,11 @@ namespace RobocopyManager
                         {
                             UpdateStatusLabel(job, statusLabel);
                         }
+
+                        if (jobStatusIndicators.TryGetValue(job.Id, out System.Windows.Shapes.Ellipse statusDot))
+                        {
+                            UpdateStatusIndicator(job, statusDot);
+                        }
                     });
 
                     SaveConfigAutomatically();
@@ -780,6 +835,11 @@ namespace RobocopyManager
                     if (jobStatusLabels.TryGetValue(job.Id, out TextBlock statusLabel))
                     {
                         UpdateStatusLabel(job, statusLabel);
+                    }
+
+                    if (jobStatusIndicators.TryGetValue(job.Id, out System.Windows.Shapes.Ellipse statusDot))
+                    {
+                        UpdateStatusIndicator(job, statusDot);
                     }
                 });
 
@@ -1190,6 +1250,26 @@ namespace RobocopyManager
             {
                 lblStatus.Text = "No previous runs";
                 lblStatus.Foreground = System.Windows.Media.Brushes.Gray;
+            }
+        }
+
+        private void UpdateStatusIndicator(RobocopyJob job, System.Windows.Shapes.Ellipse statusDot)
+        {
+            if (job.LastStatus == "Running")
+            {
+                statusDot.Fill = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(100, 181, 246)); // Blue
+            }
+            else if (job.LastStatus == "Success")
+            {
+                statusDot.Fill = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(76, 175, 80)); // Green
+            }
+            else if (job.LastStatus == "Failed")
+            {
+                statusDot.Fill = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(244, 67, 54)); // Red
+            }
+            else
+            {
+                statusDot.Fill = System.Windows.Media.Brushes.Gray; // Gray for never run
             }
         }
 

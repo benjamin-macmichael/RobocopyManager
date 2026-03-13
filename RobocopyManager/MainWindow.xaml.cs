@@ -17,6 +17,7 @@ namespace RobocopyManager
         private GlobalSettings settings = new GlobalSettings();
         private List<Process> runningProcesses = new List<Process>();
         private Dictionary<int, Process> jobProcesses = new Dictionary<int, Process>(); // Track which process belongs to which job
+        private Dictionary<int, TextBlock> jobLastRunLabels = new Dictionary<int, TextBlock>();
         private int jobIdCounter = 1;
         private System.Threading.Timer schedulerTimer = null;
         private readonly string logDirectory = Path.Combine(
@@ -333,6 +334,9 @@ namespace RobocopyManager
             {
                 lblLastRun.Text = "Never run";
             }
+
+            // Store reference for updates
+            jobLastRunLabels[job.Id] = lblLastRun;
 
             var btnRunNow = new Button
             {
@@ -721,7 +725,6 @@ namespace RobocopyManager
                 // Set status to "Running" and update UI
                 job.LastStartTime = DateTime.Now;
                 job.LastStatus = "Running";
-                job.LastFinishTime = null;
                 job.LastExitCode = null;
 
                 // Update UI on main thread
@@ -735,6 +738,11 @@ namespace RobocopyManager
                     if (jobStatusIndicators.TryGetValue(job.Id, out System.Windows.Shapes.Ellipse statusDot))
                     {
                         UpdateStatusIndicator(job, statusDot);
+                    }
+
+                    if (jobLastRunLabels.TryGetValue(job.Id, out TextBlock lastRunLabel))
+                    {
+                        UpdateLastRunLabel(job, lastRunLabel);
                     }
                 });
 
@@ -817,6 +825,11 @@ namespace RobocopyManager
                         {
                             UpdateStatusIndicator(job, statusDot);
                         }
+
+                        if (jobLastRunLabels.TryGetValue(job.Id, out TextBlock lastRunLabel))
+                        {
+                            UpdateLastRunLabel(job, lastRunLabel);
+                        }
                     });
 
                     SaveConfigAutomatically();
@@ -840,6 +853,11 @@ namespace RobocopyManager
                     if (jobStatusIndicators.TryGetValue(job.Id, out System.Windows.Shapes.Ellipse statusDot))
                     {
                         UpdateStatusIndicator(job, statusDot);
+                    }
+
+                    if (jobLastRunLabels.TryGetValue(job.Id, out TextBlock lastRunLabel))
+                    {
+                        UpdateLastRunLabel(job, lastRunLabel);
                     }
                 });
 
@@ -1253,6 +1271,29 @@ namespace RobocopyManager
             }
         }
 
+        private void UpdateLastRunLabel(RobocopyJob job, TextBlock lblLastRun)
+        {
+            // Don't update while running - keep showing last completed run
+            if (job.LastStatus == "Running")
+            {
+                // Keep the existing text, don't change it
+                return;
+            }
+
+            if (job.LastStatus == "Success" && job.LastFinishTime.HasValue)
+            {
+                lblLastRun.Text = $"Last success: {job.LastFinishTime.Value:MMM d, yyyy h:mm tt}";
+            }
+            else if (job.LastFinishTime.HasValue)
+            {
+                lblLastRun.Text = $"Last run: {job.LastFinishTime.Value:MMM d, yyyy h:mm tt}";
+            }
+            else
+            {
+                lblLastRun.Text = "Never run";
+            }
+        }
+
         private void UpdateStatusIndicator(RobocopyJob job, System.Windows.Shapes.Ellipse statusDot)
         {
             if (job.LastStatus == "Running")
@@ -1358,7 +1399,7 @@ namespace RobocopyManager
         public TimeSpan ScheduledTime { get; set; } = new TimeSpan(18, 0, 0);
         public DateTime? LastRun { get; set; }
         public string ExcludedDirectories { get; set; } = ""; // Comma-separated list of folders to exclude
-        public bool EnableArchiving { get; set; } = true; // Whether to archive old versions before running
+        public bool EnableArchiving { get; set; } = true; // Whether to archive old files before running
         public bool IsCollapsed { get; set; } = false; // Whether the job UI is collapsed
 
         // Status tracking for UI display

@@ -83,23 +83,41 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- Default TextBlock Style (White text for dark theme) -->
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+        </Style>
     </Window.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
+        <!-- Warning Banner -->
+        <Border Grid.Row="0" Background="#856404" Padding="12,10,12,10" BorderBrush="#FFC107" BorderThickness="0,0,0,2">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <TextBlock Text="⚠" FontSize="16" Foreground="#FFC107" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock Text="Keep this application open for scheduled jobs to run" 
+                           FontSize="13" 
+                           FontWeight="SemiBold"
+                           Foreground="#FFF3CD" 
+                           VerticalAlignment="Center"/>
+            </StackPanel>
+        </Border>
+
         <!-- Top Bar -->
-        <Border Grid.Row="0" Background="#252526" Padding="16,12,16,12" BorderBrush="#3f3f46" BorderThickness="0,0,0,1">
+        <Border Grid.Row="1" Background="#252526" Padding="16,12,16,12" BorderBrush="#3f3f46" BorderThickness="0,0,0,1">
             <StackPanel Orientation="Horizontal">
                 <Button x:Name="btnSettings" Content="⚙ Settings" Width="110" Height="36" Style="{StaticResource ModernButton}" Click="BtnSettings_Click"/>
             </StackPanel>
         </Border>
 
         <!-- Jobs Area -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,16,16,16">
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="16,16,16,16">
             <StackPanel x:Name="jobsPanel">
                 <Button Content="+ Add New Job" Height="44" Margin="0,0,0,12" 
                         Style="{StaticResource PrimaryButton}" 

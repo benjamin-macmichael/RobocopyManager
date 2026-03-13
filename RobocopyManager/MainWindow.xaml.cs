@@ -1399,7 +1399,7 @@ namespace RobocopyManager
         public TimeSpan ScheduledTime { get; set; } = new TimeSpan(18, 0, 0);
         public DateTime? LastRun { get; set; }
         public string ExcludedDirectories { get; set; } = ""; // Comma-separated list of folders to exclude
-        public bool EnableArchiving { get; set; } = true; // Whether to archive old versions before running
+        public bool EnableArchiving { get; set; } = true; // Whether to archive old files before running
         public bool IsCollapsed { get; set; } = false; // Whether the job UI is collapsed
 
         // Status tracking for UI display

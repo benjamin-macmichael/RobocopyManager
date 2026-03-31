@@ -129,6 +129,7 @@ namespace RobocopyManager
                         if (job.SourcePath == null) job.SourcePath = "";
                         if (job.DestinationPath == null) job.DestinationPath = "";
                         if (job.ExcludedDirectories == null) job.ExcludedDirectories = "";
+                        if (job.AdditionalFlags == null) job.AdditionalFlags = "";
                         if (job.Threads <= 0) job.Threads = 8;
                     }
 
@@ -473,6 +474,39 @@ namespace RobocopyManager
             excludePanel.Children.Add(txtExclude);
             Grid.SetRow(excludePanel, 2);
 
+            var flagsPanel = new StackPanel { Margin = new Thickness(0, 10, 0, 10) };
+            flagsPanel.Children.Add(new TextBlock
+            {
+                Text = "Additional Flags (optional):",
+                FontWeight = FontWeights.SemiBold,
+                Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)),
+                FontSize = 13
+            });
+            var txtFlags = new TextBox
+            {
+                Width = 788,
+                Margin = new Thickness(0, 6, 0, 0),
+                Text = job.AdditionalFlags,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30)),
+                Foreground = System.Windows.Media.Brushes.White,
+                BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70)),
+                BorderThickness = new Thickness(1, 1, 1, 1),
+                Padding = new Thickness(8, 6, 8, 6),
+                FontSize = 13
+            };
+            txtFlags.TextChanged += (s, e) => { job.AdditionalFlags = txtFlags.Text; SaveConfigAutomatically(); };
+            var lblFlagsExample = new TextBlock
+            {
+                Text = "Example: /DCOPY:D /COPYALL /R:0",
+                FontStyle = FontStyles.Italic,
+                Foreground = System.Windows.Media.Brushes.Gray,
+                FontSize = 11,
+                Margin = new Thickness(0, 4, 0, 0)
+            };
+            flagsPanel.Children.Add(txtFlags);
+            flagsPanel.Children.Add(lblFlagsExample);
+            Grid.SetRow(flagsPanel, 3);
+
             var archivePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 10) };
             var chkArchive = new CheckBox
             {
@@ -485,7 +519,7 @@ namespace RobocopyManager
             chkArchive.Checked += (s, e) => { job.EnableArchiving = true; SaveConfigAutomatically(); };
             chkArchive.Unchecked += (s, e) => { job.EnableArchiving = false; SaveConfigAutomatically(); };
             archivePanel.Children.Add(chkArchive);
-            Grid.SetRow(archivePanel, 3);
+            Grid.SetRow(archivePanel, 4);
 
             var threadPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
             threadPanel.Children.Add(new TextBlock { Text = "Thread Count: ", FontWeight = FontWeights.Bold, VerticalAlignment = VerticalAlignment.Center });
@@ -495,7 +529,7 @@ namespace RobocopyManager
             threadPanel.Children.Add(sliderThreads);
             threadPanel.Children.Add(lblThreads);
             threadPanel.Children.Add(new TextBlock { Text = " (Recommended: 8-32 for network)", FontStyle = FontStyles.Italic, Foreground = System.Windows.Media.Brushes.Gray, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(5, 0, 0, 0) });
-            Grid.SetRow(threadPanel, 4);
+            Grid.SetRow(threadPanel, 5);
 
             var schedulePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 5, 0, 5) };
             var chkSchedule = new CheckBox { Content = "Run on schedule: ", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
@@ -528,7 +562,7 @@ namespace RobocopyManager
             schedulePanel.Children.Add(lblColon);
             schedulePanel.Children.Add(txtMinute);
             schedulePanel.Children.Add(lblExample);
-            Grid.SetRow(schedulePanel, 5);
+            Grid.SetRow(schedulePanel, 6);
 
             var statusPanel = new StackPanel { Margin = new Thickness(0, 10, 0, 5) };
             var lblStatusHeader = new TextBlock
@@ -556,7 +590,7 @@ namespace RobocopyManager
             UpdateStatusLabel(job, lblStatus);
 
             statusPanel.Children.Add(lblStatus);
-            Grid.SetRow(statusPanel, 6);
+            Grid.SetRow(statusPanel, 7);
 
             var cmdPanel = new StackPanel { Margin = new Thickness(0, 5, 0, 0) };
             var txtCommand = new TextBox { IsReadOnly = true, Background = System.Windows.Media.Brushes.Black, Foreground = System.Windows.Media.Brushes.LightGreen, FontFamily = new System.Windows.Media.FontFamily("Consolas"), Padding = new Thickness(5), TextWrapping = TextWrapping.Wrap };
@@ -564,13 +598,15 @@ namespace RobocopyManager
             txtSource.TextChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             txtDest.TextChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             txtExclude.TextChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
+            txtFlags.TextChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             sliderThreads.ValueChanged += (s, e) => txtCommand.Text = GenerateRobocopyCommand(job);
             cmdPanel.Children.Add(txtCommand);
-            Grid.SetRow(cmdPanel, 7);
+            Grid.SetRow(cmdPanel, 8);
 
             detailsGrid.Children.Add(srcPanel);
             detailsGrid.Children.Add(dstPanel);
             detailsGrid.Children.Add(excludePanel);
+            detailsGrid.Children.Add(flagsPanel);
             detailsGrid.Children.Add(archivePanel);
             detailsGrid.Children.Add(threadPanel);
             detailsGrid.Children.Add(schedulePanel);
@@ -712,6 +748,12 @@ namespace RobocopyManager
             foreach (var dir in excludedDirs)
             {
                 cmd += $" /XD \"{dir}\"";
+            }
+
+            // Add user-specified additional flags
+            if (!string.IsNullOrWhiteSpace(job.AdditionalFlags))
+            {
+                cmd += $" {job.AdditionalFlags.Trim()}";
             }
 
             return cmd;
@@ -1401,6 +1443,8 @@ namespace RobocopyManager
         public string ExcludedDirectories { get; set; } = ""; // Comma-separated list of folders to exclude
         public bool EnableArchiving { get; set; } = true; // Whether to archive old files before running
         public bool IsCollapsed { get; set; } = false; // Whether the job UI is collapsed
+
+        public string AdditionalFlags { get; set; } = "";
 
         // Status tracking for UI display
         public DateTime? LastStartTime { get; set; }

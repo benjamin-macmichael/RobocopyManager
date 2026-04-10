@@ -407,6 +407,8 @@ namespace RobocopyManager
             detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            detailsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             detailsGrid.Visibility = job.IsCollapsed ? Visibility.Collapsed : Visibility.Visible; // Restore saved state
             Grid.SetRow(detailsGrid, 1);
 

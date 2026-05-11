@@ -470,7 +470,8 @@ namespace RobocopyManager
                 BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70)),
                 BorderThickness = new Thickness(1, 1, 1, 1),
                 Padding = new Thickness(8, 6, 8, 6),
-                FontSize = 13
+                FontSize = 13,
+                HorizontalAlignment = HorizontalAlignment.Left  // ADD THIS LINE
             };
             txtExclude.TextChanged += (s, e) => { job.ExcludedDirectories = txtExclude.Text; SaveConfigAutomatically(); };
             excludePanel.Children.Add(txtExclude);
@@ -494,7 +495,8 @@ namespace RobocopyManager
                 BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(63, 63, 70)),
                 BorderThickness = new Thickness(1, 1, 1, 1),
                 Padding = new Thickness(8, 6, 8, 6),
-                FontSize = 13
+                FontSize = 13,
+                HorizontalAlignment = HorizontalAlignment.Left  // ADD THIS LINE
             };
             txtFlags.TextChanged += (s, e) => { job.AdditionalFlags = txtFlags.Text; SaveConfigAutomatically(); };
             var lblFlagsExample = new TextBlock

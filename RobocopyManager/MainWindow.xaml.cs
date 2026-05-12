@@ -471,7 +471,7 @@ namespace RobocopyManager
                 BorderThickness = new Thickness(1, 1, 1, 1),
                 Padding = new Thickness(8, 6, 8, 6),
                 FontSize = 13,
-                HorizontalAlignment = HorizontalAlignment.Left  // ADD THIS LINE
+                HorizontalAlignment = HorizontalAlignment.Left
             };
             txtExclude.TextChanged += (s, e) => { job.ExcludedDirectories = txtExclude.Text; SaveConfigAutomatically(); };
             excludePanel.Children.Add(txtExclude);
@@ -496,7 +496,7 @@ namespace RobocopyManager
                 BorderThickness = new Thickness(1, 1, 1, 1),
                 Padding = new Thickness(8, 6, 8, 6),
                 FontSize = 13,
-                HorizontalAlignment = HorizontalAlignment.Left  // ADD THIS LINE
+                HorizontalAlignment = HorizontalAlignment.Left
             };
             txtFlags.TextChanged += (s, e) => { job.AdditionalFlags = txtFlags.Text; SaveConfigAutomatically(); };
             var lblFlagsExample = new TextBlock
@@ -514,14 +514,47 @@ namespace RobocopyManager
             var archivePanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 10, 0, 10) };
             var chkArchive = new CheckBox
             {
-                Content = "Enable archiving (save old versions)",
+                Content = "Enable archiving (automatically creates OldVersions folder in destination)",
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(200, 200, 200)),
                 FontSize = 13
             };
             chkArchive.IsChecked = job.EnableArchiving;
-            chkArchive.Checked += (s, e) => { job.EnableArchiving = true; SaveConfigAutomatically(); };
-            chkArchive.Unchecked += (s, e) => { job.EnableArchiving = false; SaveConfigAutomatically(); };
+
+            chkArchive.Checked += (s, e) =>
+            {
+                job.EnableArchiving = true;
+
+                // Add OldVersions to exclusions if not already there
+                var exclusions = job.ExcludedDirectories.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(d => d.Trim())
+                    .ToList();
+
+                if (!exclusions.Contains("OldVersions", StringComparer.OrdinalIgnoreCase))
+                {
+                    exclusions.Add("OldVersions");
+                    job.ExcludedDirectories = string.Join(", ", exclusions);
+                    txtExclude.Text = job.ExcludedDirectories;
+                }
+
+                SaveConfigAutomatically();
+            };
+
+            chkArchive.Unchecked += (s, e) =>
+            {
+                job.EnableArchiving = false;
+
+                // Remove OldVersions from exclusions
+                var exclusions = job.ExcludedDirectories.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                    .Select(d => d.Trim())
+                    .Where(d => !d.Equals("OldVersions", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                job.ExcludedDirectories = string.Join(", ", exclusions);
+                txtExclude.Text = job.ExcludedDirectories;
+
+                SaveConfigAutomatically();
+            };
             archivePanel.Children.Add(chkArchive);
             Grid.SetRow(archivePanel, 4);
 

@@ -9,7 +9,7 @@ A powerful Windows WPF application that provides an interface for managing multi
 - **Multiple Jobs**: Create and manage unlimited backup/sync jobs with individual configurations
 - **Multi-threaded Transfers**: Leverage Robocopy's `/MT` flag with configurable thread counts (1-128)
 - **Persistent Storage**: All jobs are automatically saved and restored between sessions
-- **Individual Job Control**: Run jobs individually or all at once
+- **Individual Job Control**: Run jobs individually
 - **Real-time Status Indicators**: Visual status dots (green/red/blue) show job state at a glance
 - **Detailed Status Tracking**: View start/finish times, duration, and exit codes for each job
 - **Collapsible UI**: Collapse job details to keep the interface clean and organized
@@ -101,8 +101,6 @@ git clone https://github.com/benjamin-macmichael/RobocopyManager.git
 ### Running Jobs
 
 - **Run Single Job**: Click the **"▶ Run"** button next to any job
-- **Run All Jobs**: Click **"Run All Jobs"** to execute all enabled jobs
-- **Stop Execution**: Click **"Stop All"** to terminate running jobs
 - **Job Prevention**: Jobs already running cannot be started again until completion
 
 ### Managing Job UI
@@ -155,7 +153,7 @@ OldVersions/
       └── report_2026-01-14_09-15-22.pdf
 ```
 
-The system automatically:
+The archive folder is always named `OldVersions` and is automatically excluded from Robocopy operations. The system automatically:
 
 - Archives files only when they will actually be changed or deleted
 - Compares both file size and timestamp (±2 seconds tolerance) to detect real changes
